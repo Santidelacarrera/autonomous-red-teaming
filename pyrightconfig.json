@@ -1,0 +1,6 @@
+{
+  "include": ["src", "scripts", "tests"],
+  "exclude": [".venv"],
+  "extraPaths": ["src"],
+  "typeCheckingMode": "standard"
+}
