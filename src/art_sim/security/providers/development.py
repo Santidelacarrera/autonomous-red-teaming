@@ -64,3 +64,9 @@ class DevelopmentHeaderAuthenticator:
     async def get_identity(self, authorization: str | None) -> Identity:
         """Alias authentication for provider-neutral callers."""
         return await self.authenticate(authorization)
+
+    async def health_check(self) -> None:
+        """Development identity has no external readiness dependency."""
+
+    async def close(self) -> None:
+        """Development identity owns no external resources."""

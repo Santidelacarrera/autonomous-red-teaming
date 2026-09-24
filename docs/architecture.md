@@ -18,7 +18,7 @@ flowchart TD
     HITL --> VERIFY[In-memory simulated verification]
     VERIFY --> RESULT[Immutable artifacts and Markdown report]
     RESULT --> STORE
-    SAVER[Official AsyncSqliteSaver] <--> LG
+    SAVER[Checkpoint Store] <--> LG
     SAVER <--> HITL
 ```
 
@@ -36,7 +36,7 @@ flowchart TD
 | HITL / verification | Interrupts before decision; validates HMAC and lifecycle; verifies a graph copy. | `MemorySaver` by default, injected verifier; no real remediation is applied. |
 | `platform` | Durable `SimulationRun`, portable checkpoints, append-only audit, approval compare-and-set, and health contracts. | SQLite WAL adapter runs short transactions through `asyncio.to_thread`; no secret values are persisted. |
 | `worker` | Claims durable work, resumes LangGraph checkpoints, executes deterministic Shadow analysis, and atomically commits terminal results. | Local dispatcher has process scope only; durable SQLite CAS and leases provide ownership. |
-| Reporting / telemetry | Renders Markdown and stores in-memory spans/metrics. | Optional JSON logging sink exists; no external tracing backend. |
+| Reporting / telemetry | Renders Markdown and emits typed metrics/traces. | Process collectors are development-only; production requires an external adapter. |
 
 ## Dependency graph
 
@@ -70,7 +70,7 @@ See [worker.md](worker.md), [workflow-orchestration.md](workflow-orchestration.m
 [result-persistence.md](result-persistence.md). A server database and distributed
 dispatcher remain required substitutions for multi-node production.
 
-## Phase 12 production boundary
+## Production operations boundary
 
 The API, application services, worker, and workflow depend only on ports. Production
 composition requires declared capabilities: verified OIDC, distributed rate limiting,
@@ -81,3 +81,9 @@ are rejected.
 `SimulationJobV1` crosses the broker boundary. A database fencing token, not broker
 delivery order, authorizes worker writes. See [distributed execution](distributed-execution.md)
 and [operational store](operational-store.md).
+
+Phase 13 adds explicit non-secret configuration for broker, server database, managed
+secrets, durable audit retention, external telemetry, distributed rate limiting, TLS and
+data retention. Production readiness probes database, broker, secret provider, identity,
+limiter, audit and telemetry independently. These contracts do not instantiate or claim
+vendor services.

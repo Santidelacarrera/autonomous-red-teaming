@@ -1,5 +1,8 @@
 # Project Baseline
 
+> Historical initial baseline. Current Phase 14 evidence is maintained in
+> `docs/test-matrix.md` and `docs/production-readiness.md`.
+
 ## Date
 
 2026-09-24

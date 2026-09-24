@@ -1,39 +1,52 @@
-# Configuration audit
+# Configuration
 
-| Setting | Classification | Current source | Handling |
-| --- | --- | --- | --- |
-| `NEO4J_URI` | Environment-specific | `.env` / process environment | Required by `scripts/seed_db.py`; not a secret. |
-| `NEO4J_USER` / `NEO4J_USERNAME` | Environment-specific | `.env` / process environment | Defaults to `neo4j` only in the seed script. |
-| `NEO4J_PASSWORD` | Secret | `.env` / process environment | Wrapped as `SecretStr`; never printed by project code. |
-| GitHub token | Secret | caller-built `GitHubSettings` | `SecretStr`; no environment composition currently exists. |
-| `approval_secret` | Secret | injected bytes | Required, at least 32 bytes; absence fails closed. |
-| Neo4j pool/database/encryption | Runtime | `Neo4jSettings` | Validated Pydantic settings. |
-| risk weights / depth | Runtime | typed settings / method argument | Bounded Pydantic or method validation. |
-| `ART_AUTH_PROVIDER` | Security | process environment | `development` only locally; `oidc` required outside development. |
-| `ART_OIDC_ISSUER`, `ART_OIDC_AUDIENCE`, `ART_OIDC_JWKS_URL` | Security/public | process environment | Complete HTTPS OIDC configuration required together. |
-| `ART_OIDC_MFA_CLAIM` | Security/public | process environment | Exact top-level verified JWT claim used for MFA; never inferred. |
-| `ART_OIDC_MFA_VALUES` | Security/public | comma-separated environment value | Exact accepted string values; required with the claim when MFA enforcement is enabled. |
-| `ART_CORS_ALLOWED_ORIGINS` | Security | comma-separated environment value | Explicit origins; wildcard and malformed origins fail validation. |
-| `ART_RATE_LIMIT_ENABLED` and per-operation limits | Security | process environment | Explicit bounded policy; production requires a shared adapter. |
-| `ART_MFA_REQUIRED_FOR_SENSITIVE_ACTIONS` | Security | process environment | Requires verified IdP MFA context for simulated approval. |
-| `ART_HSTS_ENABLED` | Edge security | process environment | Production HTTPS only; rejected in local development. |
+Configuration is validated by Pydantic before work is accepted. `.env.example` is the
+development template; `.env.production.example` contains non-secret production
+references. Neither proves an external service is present.
 
-`.env`, virtual environments and cache directories are ignored by Git. No secret values
-real secrets are present in tracked source, tests, reports, or telemetry fixtures.
-`EnvironmentSecretProvider`
-is local-only. Production requires an asynchronous `ExternalSecretProvider` capability
-implemented by the deployment for a managed secret service; no cloud SDK is coupled to
-the domain or fabricated by this repository.
+## Development
 
-`OperationalSettings` adds explicit `development`, `staging`, and `production`
-profiles, operational SQLite path, workflow version, logging level, and approval-secret
-name. Production startup asynchronously resolves a non-empty approval secret of at least
-32 bytes before serving. Secret rotation is operationally a controlled window:
-deploy the new provider value to all workers, retain the old verifier material only while
-pending approvals require it, then revoke it. An approval that cannot verify under the
-accepted rotation set is rejected.
+| Variable | Purpose |
+| --- | --- |
+| `ART_ENV` | Must be `development` for `art_sim.api.main`. |
+| `ART_AUTH_MODE` / `ART_AUTH_PROVIDER` | `development`; conflicting values fail. |
+| `ART_SIM_OPERATIONAL_DB` | Explicit SQLite file, development only. |
+| `ART_CORS_ALLOWED_ORIGINS` | Comma-separated exact local origins. |
+| `ART_RATE_LIMIT_ENABLED` | Local process limiter toggle; cannot disable production limiting. |
+| `ART_*_REQUESTS_PER_MINUTE` | Positive bounded endpoint policies. |
+| `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD` | Optional local Shadow seed/E2E; password is secret. |
+| `VITE_*` | Frontend API, auth-mode and polling development settings. |
 
-Do not print `SecretStr.get_secret_value()`, commit `.env`, or use the sample seed script
-against a non-Shadow database. Rotate any Neo4j credential that has been exposed; the
-application never performs that external rotation or edits `.env`. The current
-repository has no feature-flag system.
+## Production identity
+
+`SecuritySettings.from_environment()` requires `ART_AUTH_MODE=oidc`, complete HTTPS
+`ART_OIDC_ISSUER`, `ART_OIDC_AUDIENCE`, `ART_OIDC_JWKS_URL`, exact CORS origins,
+enabled HSTS and rate limiting. Sensitive approval can require an explicit
+`ART_OIDC_MFA_CLAIM` plus accepted `ART_OIDC_MFA_VALUES`. Development auth, wildcard
+CORS, HTTP origins, shared-secret JWT algorithms and incomplete OIDC config fail closed.
+
+## Production dependencies
+
+`ProductionDependencySettings.from_environment()` consumes:
+
+- broker: `ART_BROKER_PROVIDER`, endpoint, queue, credential-secret name, timeout,
+  visibility, in-flight and attempt bounds;
+- database: provider, DSN-secret name, pool and timeout bounds;
+- secrets: managed provider plus distinct approval/database/broker secret references;
+- audit/telemetry/rate limit: provider family and audit retention;
+- data lifecycle: simulation, result, checkpoint, DLQ and telemetry retention days;
+- edge: upstream TLS, trusted proxy hops, request timeout and maximum bytes.
+
+Only references are loaded. Actual adapters are passed to `create_production_app(...)`.
+Production rejects SQLite, local dispatch, process limiting, volatile audit, environment
+secrets, development identity and process telemetry.
+
+## Secret handling and rotation
+
+The approval HMAC value must be at least 32 bytes and is retrieved asynchronously at
+startup. Database, broker and optional OIDC client credentials remain in the managed
+provider. The external port supports health, atomic reload and close; it never exposes
+values to audit/telemetry/jobs. Rotate by staging the new version, atomically reloading
+all replicas, verifying readiness, completing or invalidating pending approval evidence,
+then revoking the old version. Failed reload retains the last valid set or makes the
+replica unready according to adapter policy; it must never install a partial set.

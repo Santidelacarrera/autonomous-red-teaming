@@ -1,5 +1,8 @@
 # Hardening and production-readiness audit
 
+> Historical Phase 6 audit. Current production/security status is maintained in
+> `production-readiness.md`, `threat-model.md`, and `test-matrix.md`.
+
 ## Security conclusions
 
 The simulator remains a **Shadow-only, non-operational** system. `SimulatedAttackGraph`

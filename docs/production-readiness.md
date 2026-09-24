@@ -1,62 +1,65 @@
 # Production readiness
 
-## Current state
+## Objective status
 
-The project is a validated defensive Shadow simulator. The audited baseline has passing
-tests, static analysis, and a successful read-only Shadow E2E. It does not apply
-infrastructure changes or automatically publish remediation.
+The platform remains `SIMULATION-ONLY`. The application contracts and fail-closed
+composition are implemented, while mandatory production services are deployment-owned
+and are not represented as connected. Overall status:
 
-## Ready
+`READY WITH EXTERNAL DEPENDENCY`
 
-- Typed input validation and bounded deterministic graph traversal
-- In-memory Shadow isolation, rollback and parallel branch regression tests
-- HMAC-backed human approval, fail-closed missing secret, and typed lifecycle
-- Review-only remediation exporters and simulated post-remediation verification
-- Parameterized Cypher validation, retrying async Neo4j/GitHub adapters
+| Capability | Status | Evidence | External dependency | Validation date |
+| --- | --- | --- | --- | --- |
+| API and lifecycle | VALIDATED | API/integration tests | No | 2026-09-24 |
+| Shadow simulation workflow | VALIDATED | unit + Shadow E2E | Neo4j only for optional E2E | 2026-09-24 |
+| OIDC/JWT/RBAC/MFA adapter boundary | READY WITH EXTERNAL DEPENDENCY | concrete JWKS/JWT adapter tests and production rejection tests | Production OIDC tenant/JWKS | 2026-09-24 |
+| Local worker | DEVELOPMENT ONLY | restart/recovery/concurrency tests | No | 2026-09-24 |
+| Distributed worker contract | READY WITH EXTERNAL DEPENDENCY | message, dispatcher, fencing and poison tests | Broker + worker deployment | 2026-09-24 |
+| Broker boundary | READY WITH EXTERNAL DEPENDENCY | provider-neutral contract/config/error tests | Selected broker service | 2026-09-24 |
+| Concrete broker adapter | NOT IMPLEMENTED | no Redis Streams/RabbitMQ/Kafka/SQS transport module | Provider selection and integration environment | 2026-09-24 |
+| SQLite operational store | DEVELOPMENT ONLY | persistence/concurrency tests | No | 2026-09-24 |
+| Server operational-store boundary | READY WITH EXTERNAL DEPENDENCY | protocol, configuration and rejection tests | Selected server database | 2026-09-24 |
+| PostgreSQL adapter and migrations | NOT IMPLEMENTED | no concrete pool/store or migration package | PostgreSQL service and integration environment | 2026-09-24 |
+| Secret-manager boundary | READY WITH EXTERNAL DEPENDENCY | async port, startup validation and redaction tests | Selected managed secret service | 2026-09-24 |
+| Concrete managed-secret adapter | NOT IMPLEMENTED | no AWS/Vault/GCP/Azure client adapter | Provider selection and workload identity | 2026-09-24 |
+| Distributed rate-limit boundary | READY WITH EXTERNAL DEPENDENCY | port + process-adapter rejection tests | Selected shared limiter | 2026-09-24 |
+| Concrete distributed limiter | NOT IMPLEMENTED | no Redis/gateway/proxy adapter | Shared backend or edge service | 2026-09-24 |
+| Durable audit boundary | READY WITH EXTERNAL DEPENDENCY | typed/redacted schema and retention contract tests | Selected SIEM/event store | 2026-09-24 |
+| Concrete durable audit adapter | NOT IMPLEMENTED | no SIEM/event-store client adapter | Audit backend and retention service | 2026-09-24 |
+| External telemetry boundary | READY WITH EXTERNAL DEPENDENCY | typed metrics/traces and capability rejection tests | Selected OTLP/Prometheus backend | 2026-09-24 |
+| Concrete telemetry exporter | NOT IMPLEMENTED | no OTLP/Prometheus exporter composition | Collector/backend | 2026-09-24 |
+| Health and readiness | VALIDATED | live local API + multi-dependency failure tests | Real probes supplied by adapters | 2026-09-24 |
+| TLS/API gateway/WAF | READY WITH EXTERNAL DEPENDENCY | production config validation + deployment contract | Edge infrastructure | 2026-09-24 |
+| Frontend | VALIDATED | 19 Vitest tests, lint, typecheck, build | Production OIDC client configuration | 2026-09-24 |
+| Python dependency lock | VALIDATED | `requirements.lock`, `requirements-runtime.lock` | Lock regeneration tooling | 2026-09-24 |
+| npm dependency lock | VALIDATED | `frontend/package-lock.json`, tests/build/audit | npm registry during build | 2026-09-24 |
+| Source SBOM and artifact hashes | VALIDATED | regenerated CycloneDX documents + 5 verified SHA-256 entries | No | 2026-09-24 |
+| Immutable Docker base reference | VALIDATED | official manifest-list digest resolved and pinned in both stages | Registry availability during build | 2026-09-24 |
+| Immutable GitHub Action references | VALIDATED | every `uses:` entry pinned to a resolved full commit SHA | GitHub Actions availability | 2026-09-24 |
+| Container image build | BLOCKED | Docker preflight failed before build | Running Docker Desktop/Linux daemon | 2026-09-24 |
+| Container vulnerability scan | READY WITH EXTERNAL DEPENDENCY | commit-pinned Anchore CI gate configured | Hosted CI/Docker daemon and vulnerability DB | 2026-09-24 |
+| Signed provenance | READY WITH EXTERNAL DEPENDENCY | commit-pinned GitHub artifact-attestation step configured for pushes | Hosted workflow identity and retained attestation | 2026-09-24 |
+| Deployment automation | NOT IMPLEMENTED | no cloud/Kubernetes/Compose production manifest or apply workflow | Selected platform and operator approval | 2026-09-24 |
+| Backup/restore drill | READY WITH EXTERNAL DEPENDENCY | controlled procedure documented, not executed server-side | Server database, broker and audit backends | 2026-09-24 |
+| Multi-region | NOT IMPLEMENTED | no coordination adapter or test environment | Region topology and external services | 2026-09-24 |
 
-## Implemented in this phase
+## Phase 14 local evidence
 
-- SQLite WAL operational store with versioned schema migration record, durable run,
-  checkpoint, and append-only audit event contracts
-- Transactional single-decision approval coordinator for shared SQLite deployments
-- Environment-aware operational settings, health/readiness service, and JSON telemetry sink
-- Non-root container contract, CI lint/type/test/build/security-scan workflow, and runbooks
-- Versioned FastAPI adapter with request correlation, development-only RBAC adapter,
-  idempotent run creation, and proposal-only result endpoints
-- Separate production DI composition with strict OIDC/MFA configuration and startup
-  capability checks for distributed rate limiting and durable security audit
-- Central security-audit redaction and explicit MFA-failure evidence
-- Durable simulation worker with SQLite execution CAS, leases, bounded recovery,
-  official LangGraph checkpoint resume, and immutable result commits
-- Restart-safe HITL decisions and real persisted result endpoints
-- Frontend lifecycle polling with terminal stop and bounded transient-error backoff
-- Versioned broker jobs, distributed dispatcher/consumer ports, fencing tokens,
-  lease heartbeat, safe poison-job records, and cooperative cancellation
-- Declarative capability checks that reject SQLite, local dispatch, environment-only
-  secrets, volatile audit, process limiting, and process telemetry in production
+| Check | Result |
+| --- | --- |
+| Backend Pytest | PASS — 121 tests |
+| Frontend Vitest | PASS — 19 tests in 7 files |
+| Ruff | PASS |
+| Mypy strict | PASS — 99 source files |
+| Frontend lint/typecheck/build | PASS |
+| `pip-audit -r requirements.lock` | PASS — no known vulnerabilities |
+| `npm audit --audit-level=high` | PASS — 0 vulnerabilities |
+| Shadow E2E | PASS |
+| Local Python/frontend SBOM + SHA-256 manifest | PASS — generated under ignored `var/audit/` |
+| Docker build/start/health | BLOCKED BY LOCAL ENVIRONMENT — daemon unavailable |
+| Local image scan | NOT EXECUTED — no locally built image |
+| Local Gitleaks | NOT EXECUTED — CLI unavailable; hosted CI gate configured |
+| Hosted CI/image scan | NOT EXECUTED in this audit — workflow configured |
 
-## Needs work
-
-- Managed secret-provider adapter, key rotation execution, and retention policy
-- Server-database adapter for multi-node / multi-region coordination
-- External telemetry backend, alerting, and production deployment configuration
-- Concrete IdP tenant/client configuration and distributed rate-limiter adapter
-- Durable immutable security-audit/SIEM adapter and its retention policy
-- Distributed broker/dispatcher and independently deployed production worker runtime
-- Server-grade execution, checkpoint, and result persistence for multi-replica workers
-- Pinned dependency lockfile, image scan, least-privilege identities, and release provenance
-
-## Production composition status
-
-- **IMPLEMENTED:** `create_production_app(...)`, strict OIDC/JWKS verifier, HTTPS CORS,
-  HSTS, explicit secret resolution, fail-closed dependency capability validation, and
-  rejection of a missing or process-local worker dispatcher.
-- **READY WITH EXTERNAL DEPENDENCY:** real distributed limiter, durable audit sink,
-  managed secret provider, server operational store, distributed dispatcher/worker,
-  external telemetry, IdP configuration, and TLS edge.
-- **NOT IMPLEMENTED:** those vendor-specific adapters, multi-region coordination,
-  immutable retention service, cooperative cancellation, or cloud deployment automation.
-
-The existence of production contracts does not make this repository production-ready.
-SQLite remains a documented single-node option and must not be presented as a
-multi-replica operational database.
+Counts and results above must be updated whenever the suite changes; they are not a
+service-level guarantee.

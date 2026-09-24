@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 from uuid import UUID, uuid4
 
 import httpx
@@ -26,11 +26,20 @@ from art_sim.observability.sink import (
     TelemetryCapability,
 )
 from art_sim.platform.config import OperationalSettings, RuntimeEnvironment
+from art_sim.platform.database import ServerDatabaseSettings
 from art_sim.platform.health import HealthService
 from art_sim.platform.ports import OperationalStoreCapability
+from art_sim.platform.production_config import (
+    DataRetentionSettings,
+    DistributedRateLimitProvider,
+    DurableAuditProvider,
+    ProductionDependencySettings,
+    TelemetryProvider,
+)
 from art_sim.platform.sqlite import SqliteOperationalStore
 from art_sim.security.audit import (
     AuditDurability,
+    AuditRetentionPolicy,
     InMemorySecurityAuditSink,
     SecurityAuditEvent,
     SecurityEventType,
@@ -44,7 +53,13 @@ from art_sim.security.rate_limit import (
     RateLimiterScope,
     RateLimitPolicy,
 )
-from art_sim.security.secrets import EnvironmentSecretProvider, SecretProviderCapability
+from art_sim.security.secrets import (
+    EnvironmentSecretProvider,
+    SecretManagerProvider,
+    SecretManagerSettings,
+    SecretProviderCapability,
+)
+from art_sim.worker.broker import BrokerProvider, BrokerSettings
 from art_sim.worker.jobs import CancellationReceipt, DispatchReceipt
 from art_sim.worker.ports import DispatcherScope
 
@@ -66,7 +81,7 @@ class _Issuer:
 
     @staticmethod
     def _public_jwk(key: rsa.RSAPrivateKey, kid: str) -> dict[str, Any]:
-        value = json.loads(RSAAlgorithm.to_jwk(key.public_key()))
+        value = cast(dict[str, Any], json.loads(RSAAlgorithm.to_jwk(key.public_key())))
         value["kid"] = kid
         value["use"] = "sig"
         value["alg"] = "RS256"
@@ -99,6 +114,7 @@ class _Issuer:
             "aud": self.audience,
             "sub": "oidc-user",
             "iat": now,
+            "nbf": now - timedelta(seconds=1),
             "exp": now + timedelta(minutes=5),
             "roles": list(roles),
         }
@@ -264,8 +280,9 @@ async def test_valid_oidc_jwt_is_accepted_by_api(tmp_path: Path) -> None:
         {"exp": datetime.now(UTC) - timedelta(minutes=5)},
         {"iss": "https://attacker.example.com"},
         {"aud": "another-api"},
+        {"nbf": datetime.now(UTC) + timedelta(minutes=5)},
     ],
-    ids=("expired", "wrong-issuer", "wrong-audience"),
+    ids=("expired", "wrong-issuer", "wrong-audience", "not-yet-valid"),
 )
 async def test_invalid_oidc_claims_receive_401(
     tmp_path: Path,
@@ -341,6 +358,12 @@ class _DistributedLimiter:
         del key, policy
         return RateLimitDecision(True)
 
+    async def health_check(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
 
 class _DistributedDispatcher:
     deployment_scope: ClassVar[DispatcherScope] = DispatcherScope.DISTRIBUTED
@@ -350,6 +373,12 @@ class _DistributedDispatcher:
 
     async def cancel(self, run_id: UUID) -> CancellationReceipt:
         return CancellationReceipt(run_id=run_id, accepted=True)
+
+    async def health_check(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
 
 
 class _ProcessDispatcher:
@@ -364,6 +393,7 @@ class _ProcessDispatcher:
 
 class _DurableAudit:
     durability: ClassVar[AuditDurability] = AuditDurability.DURABLE
+    retention_policy = AuditRetentionPolicy(retention_days=365, archive_after_days=90)
 
     def __init__(self) -> None:
         self.events: list[SecurityAuditEvent] = []
@@ -374,6 +404,12 @@ class _DurableAudit:
     async def recent(self, limit: int = 50) -> tuple[SecurityAuditEvent, ...]:
         return tuple(reversed(self.events[-limit:]))
 
+    async def health_check(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
 
 class _SecretProvider:
     deployment_capability: ClassVar[SecretProviderCapability] = (
@@ -383,6 +419,15 @@ class _SecretProvider:
     async def get_secret(self, name: str) -> SecretStr:
         del name
         return SecretStr("a-secure-test-secret-with-32-bytes-minimum")
+
+    async def health_check(self) -> None:
+        return None
+
+    async def reload(self, names: tuple[str, ...]) -> None:
+        del names
+
+    async def close(self) -> None:
+        return None
 
 
 class _ShortSecretProvider(_SecretProvider):
@@ -398,6 +443,12 @@ class _ServerStore(SqliteOperationalStore):
         OperationalStoreCapability.SERVER_GRADE
     )
 
+    async def health_check(self) -> None:
+        await self.list_runs(limit=1)
+
+    async def close(self) -> None:
+        return None
+
 
 class _ExternalTelemetry:
     deployment_capability: ClassVar[TelemetryCapability] = TelemetryCapability.EXTERNAL
@@ -407,6 +458,12 @@ class _ExternalTelemetry:
 
     async def emit_trace(self, event: Any) -> None:
         del event
+
+    async def health_check(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
 
 
 def _production_settings(issuer: _Issuer) -> SecuritySettings:
@@ -427,11 +484,45 @@ def _operational_settings(tmp_path: Path) -> OperationalSettings:
     )
 
 
+def _dependency_settings() -> ProductionDependencySettings:
+    return ProductionDependencySettings(
+        broker=BrokerSettings(
+            provider=BrokerProvider.REDIS_STREAMS,
+            endpoint="rediss://broker.example.com",
+            queue_name="art-sim",
+            credential_secret_name="ART_BROKER_CREDENTIAL",
+        ),
+        database=ServerDatabaseSettings(dsn_secret_name="ART_DATABASE_DSN"),
+        secrets=SecretManagerSettings(
+            provider=SecretManagerProvider.HASHICORP_VAULT,
+            approval_hmac_secret_name="ART_SIM_APPROVAL_SECRET",
+            database_secret_name="ART_DATABASE_DSN",
+            broker_secret_name="ART_BROKER_CREDENTIAL",
+        ),
+        audit_provider=DurableAuditProvider.SIEM,
+        audit_retention=AuditRetentionPolicy(
+            retention_days=365,
+            archive_after_days=90,
+        ),
+        telemetry_provider=TelemetryProvider.OTLP,
+        rate_limit_provider=DistributedRateLimitProvider.REDIS,
+        retention=DataRetentionSettings(
+            simulation_days=90,
+            result_artifact_days=90,
+            checkpoint_days=30,
+            dead_letter_days=30,
+            telemetry_days=30,
+        ),
+        tls_terminated_upstream=True,
+        trusted_proxy_hops=1,
+    )
+
+
 def test_production_rejects_development_authenticator(tmp_path: Path) -> None:
     issuer = _Issuer()
     with pytest.raises(ConfigurationError, match="OIDC"):
         create_production_app(
-            authenticator=DevelopmentHeaderAuthenticator(enabled=True),  # type: ignore[arg-type]
+            authenticator=DevelopmentHeaderAuthenticator(enabled=True),
             rate_limiter=_DistributedLimiter(),
             security_audit=_DurableAudit(),
             secret_provider=_SecretProvider(),
@@ -439,6 +530,7 @@ def test_production_rejects_development_authenticator(tmp_path: Path) -> None:
             dispatcher=_DistributedDispatcher(),
             security_settings=_production_settings(issuer),
             operational_settings=_operational_settings(tmp_path),
+            dependency_settings=_dependency_settings(),
             scenario_ids=("shadow-demo",),
         )
 
@@ -451,10 +543,11 @@ def test_production_rejects_in_memory_rate_limiter(tmp_path: Path) -> None:
             rate_limiter=InMemoryRateLimiter(),  # type: ignore[arg-type]
             security_audit=_DurableAudit(),
             secret_provider=_SecretProvider(),
-            store=SqliteOperationalStore(tmp_path / "production.sqlite3"),
+            store=SqliteOperationalStore(tmp_path / "production.sqlite3"),  # type: ignore[arg-type]
             dispatcher=_DistributedDispatcher(),
             security_settings=_production_settings(issuer),
             operational_settings=_operational_settings(tmp_path),
+            dependency_settings=_dependency_settings(),
             scenario_ids=("shadow-demo",),
         )
 
@@ -467,10 +560,11 @@ def test_production_rejects_in_memory_audit_sink(tmp_path: Path) -> None:
             rate_limiter=_DistributedLimiter(),
             security_audit=InMemorySecurityAuditSink(),  # type: ignore[arg-type]
             secret_provider=_SecretProvider(),
-            store=SqliteOperationalStore(tmp_path / "production.sqlite3"),
+            store=SqliteOperationalStore(tmp_path / "production.sqlite3"),  # type: ignore[arg-type]
             dispatcher=_DistributedDispatcher(),
             security_settings=_production_settings(issuer),
             operational_settings=_operational_settings(tmp_path),
+            dependency_settings=_dependency_settings(),
             scenario_ids=("shadow-demo",),
         )
 
@@ -487,6 +581,7 @@ def test_production_rejects_process_local_dispatcher(tmp_path: Path) -> None:
             dispatcher=_ProcessDispatcher(),  # type: ignore[arg-type]
             security_settings=_production_settings(issuer),
             operational_settings=_operational_settings(tmp_path),
+            dependency_settings=_dependency_settings(),
             scenario_ids=("shadow-demo",),
         )
 
@@ -499,10 +594,11 @@ def test_production_rejects_single_node_sqlite_store(tmp_path: Path) -> None:
             rate_limiter=_DistributedLimiter(),
             security_audit=_DurableAudit(),
             secret_provider=_SecretProvider(),
-            store=SqliteOperationalStore(tmp_path / "production.sqlite3"),
+            store=SqliteOperationalStore(tmp_path / "production.sqlite3"),  # type: ignore[arg-type]
             dispatcher=_DistributedDispatcher(),
             security_settings=_production_settings(issuer),
             operational_settings=_operational_settings(tmp_path),
+            dependency_settings=_dependency_settings(),
             scenario_ids=("shadow-demo",),
         )
 
@@ -520,6 +616,7 @@ def test_production_rejects_environment_secret_provider(tmp_path: Path) -> None:
             telemetry=_ExternalTelemetry(),
             security_settings=_production_settings(issuer),
             operational_settings=_operational_settings(tmp_path),
+            dependency_settings=_dependency_settings(),
             scenario_ids=("shadow-demo",),
         )
 
@@ -536,6 +633,7 @@ def test_production_rejects_missing_external_telemetry(tmp_path: Path) -> None:
             dispatcher=_DistributedDispatcher(),
             security_settings=_production_settings(issuer),
             operational_settings=_operational_settings(tmp_path),
+            dependency_settings=_dependency_settings(),
             scenario_ids=("shadow-demo",),
         )
 
@@ -580,6 +678,7 @@ def test_valid_production_composition_is_created(tmp_path: Path) -> None:
         telemetry=_ExternalTelemetry(),
         security_settings=_production_settings(issuer),
         operational_settings=_operational_settings(tmp_path),
+        dependency_settings=_dependency_settings(),
         scenario_ids=("shadow-demo",),
     )
     assert isinstance(app, FastAPI)
@@ -599,6 +698,7 @@ def test_production_startup_rejects_invalid_approval_secret(tmp_path: Path) -> N
         telemetry=_ExternalTelemetry(),
         security_settings=_production_settings(issuer),
         operational_settings=_operational_settings(tmp_path),
+        dependency_settings=_dependency_settings(),
         scenario_ids=("shadow-demo",),
     )
     with pytest.raises(ConfigurationError, match="approval secret"), TestClient(app):

@@ -8,7 +8,7 @@ from enum import StrEnum
 from typing import ClassVar, Protocol
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from art_sim.security.redaction import redact_security_text
 
@@ -31,10 +31,42 @@ class SecurityEventType(StrEnum):
     RATE_LIMIT_EXCEEDED = "rate_limit.exceeded"
     LOGOUT = "session.logout"
     SIMULATION_CREATED = "simulation.created"
+    SIMULATION_STARTED = "simulation.started"
+    SIMULATION_COMPLETED = "simulation.completed"
+    SIMULATION_FAILED = "simulation.failed"
     SIMULATION_CANCELLED = "simulation.cancelled"
+    APPROVAL_REQUESTED = "approval.requested"
     APPROVAL_APPROVED = "approval.approved"
     APPROVAL_REJECTED = "approval.rejected"
+    LEASE_ACQUIRED = "worker.lease_acquired"
+    LEASE_EXPIRED = "worker.lease_expired"
+    FENCING_REJECTED = "worker.fencing_rejected"
+    RETRY = "worker.retry"
+    POISON_JOB = "worker.poison_job"
+    RECOVERY = "worker.recovery"
+    RESULT_PUBLISHED = "simulation.result_published"
+    SECURITY_CONFIGURATION_FAILURE = "security.configuration_failure"
     ADMIN_READ = "admin.security_read"
+
+
+class AuditRetentionPolicy(BaseModel):
+    """Deployment retention boundary; legal requirements remain operator supplied."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    retention_days: int = Field(ge=1, le=3650)
+    archive_after_days: int | None = Field(default=None, ge=1, le=3650)
+    immutable_storage_required: bool = True
+
+    @model_validator(mode="after")
+    def archive_before_deletion(self) -> AuditRetentionPolicy:
+        """Reject an archive threshold at or beyond the deletion threshold."""
+        if (
+            self.archive_after_days is not None
+            and self.archive_after_days >= self.retention_days
+        ):
+            raise ValueError("archive threshold must precede retention deletion")
+        return self
 
 
 class SecurityAuditEvent(BaseModel):
@@ -76,6 +108,14 @@ class DurableSecurityAuditSink(SecurityAuditSink, Protocol):
     Implementations must declare ``durability = AuditDurability.DURABLE``. No external
     service is represented as connected by this interface alone.
     """
+
+    retention_policy: AuditRetentionPolicy
+
+    async def health_check(self) -> None:
+        """Verify durable append availability without writing a synthetic event."""
+
+    async def close(self) -> None:
+        """Flush buffered events and release external connections."""
 
 
 class InMemorySecurityAuditSink:

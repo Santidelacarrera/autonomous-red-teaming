@@ -6,7 +6,7 @@ import os
 from enum import StrEnum
 from typing import ClassVar, Protocol
 
-from pydantic import SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
 from art_sim.domain.exceptions import ConfigurationError
 
@@ -16,6 +16,43 @@ class SecretProviderCapability(StrEnum):
 
     ENVIRONMENT = "environment"
     EXTERNAL = "external"
+
+
+class SecretManagerProvider(StrEnum):
+    """Managed secret-service adapter families supported by the port."""
+
+    AWS_SECRETS_MANAGER = "aws_secrets_manager"
+    HASHICORP_VAULT = "hashicorp_vault"
+    GCP_SECRET_MANAGER = "gcp_secret_manager"
+    AZURE_KEY_VAULT = "azure_key_vault"
+
+
+class SecretManagerSettings(BaseModel):
+    """Non-secret configuration for a deployment-owned secret-manager adapter."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    provider: SecretManagerProvider
+    approval_hmac_secret_name: str = Field(pattern=r"^[A-Za-z0-9_./-]{3,256}$")
+    database_secret_name: str = Field(pattern=r"^[A-Za-z0-9_./-]{3,256}$")
+    broker_secret_name: str = Field(pattern=r"^[A-Za-z0-9_./-]{3,256}$")
+    oidc_client_secret_name: str | None = Field(
+        default=None, pattern=r"^[A-Za-z0-9_./-]{3,256}$"
+    )
+    retrieval_timeout_seconds: float = Field(default=5.0, gt=0.0, le=60.0)
+    cache_ttl_seconds: int = Field(default=300, ge=0, le=86_400)
+
+    @model_validator(mode="after")
+    def require_distinct_secret_references(self) -> SecretManagerSettings:
+        """Prevent accidental reuse of approval, database, and broker credentials."""
+        names = {
+            self.approval_hmac_secret_name,
+            self.database_secret_name,
+            self.broker_secret_name,
+        }
+        if len(names) != 3:
+            raise ValueError("approval, database, and broker secrets must be distinct")
+        return self
 
 
 class SecretProvider(Protocol):
@@ -56,3 +93,12 @@ class ExternalSecretProvider(AsyncSecretProvider, Protocol):
     Concrete adapters must declare ``deployment_capability = EXTERNAL`` and keep I/O
     outside domain code. No cloud secret-manager connection is fabricated here.
     """
+
+    async def health_check(self) -> None:
+        """Verify provider availability without returning or logging secret values."""
+
+    async def reload(self, names: tuple[str, ...]) -> None:
+        """Refresh selected cached values atomically or retain the last valid set."""
+
+    async def close(self) -> None:
+        """Release provider resources without exposing cached values."""

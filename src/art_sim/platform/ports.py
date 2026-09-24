@@ -154,3 +154,9 @@ class ServerOperationalStore(OperationalStore, Protocol):
     monotonically increasing fencing tokens, and immutable result publication. This
     protocol is not evidence that a concrete PostgreSQL or managed-DB adapter exists.
     """
+
+    async def health_check(self) -> None:
+        """Verify transactional connectivity without mutating durable state."""
+
+    async def close(self) -> None:
+        """Drain and close the server connection pool."""

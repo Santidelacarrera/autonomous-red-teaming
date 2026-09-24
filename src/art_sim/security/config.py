@@ -84,7 +84,11 @@ class SecuritySettings(BaseModel):
     def from_environment(cls, environment: RuntimeEnvironment) -> SecuritySettings:
         """Build validated settings without defaulting production to development auth."""
         provider_default = "development" if environment is RuntimeEnvironment.DEVELOPMENT else "oidc"
-        provider = AuthenticationProviderKind(os.getenv("ART_AUTH_PROVIDER", provider_default))
+        auth_mode = os.getenv("ART_AUTH_MODE")
+        auth_provider = os.getenv("ART_AUTH_PROVIDER")
+        if auth_mode and auth_provider and auth_mode != auth_provider:
+            raise ConfigurationError("ART_AUTH_MODE conflicts with ART_AUTH_PROVIDER")
+        provider = AuthenticationProviderKind(auth_mode or auth_provider or provider_default)
         issuer = os.getenv("ART_OIDC_ISSUER")
         audience = os.getenv("ART_OIDC_AUDIENCE")
         jwks_url = os.getenv("ART_OIDC_JWKS_URL")

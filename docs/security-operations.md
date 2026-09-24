@@ -20,8 +20,9 @@
 ## Audit and alerting
 
 Typed security events include authentication success/failure, MFA failure, authorization denial,
-rate-limit excess, logout, simulation creation, approval decisions, and security-admin
-reads. Fields are restricted to event/time/type, subject, issuer, request ID, optional
+rate-limit excess, logout, simulation lifecycle, approval request/decisions, lease acquire/
+expiry, fencing rejection, retry, poison, recovery, result publication, configuration
+failure, and security-admin reads. Fields are restricted to event/time/type, subject, issuer, request ID, optional
 run ID, source and result. The schema cannot accept authorization headers, cookies,
 tokens, passwords, keys, arbitrary metadata, or raw request bodies. A central redactor
 also replaces bearer/JWT material and credential-labelled values in the remaining
@@ -49,3 +50,6 @@ tokens, refresh tokens, private keys, or full authorization/cookie headers.
 Any credential exposed outside its intended secret boundary must be rotated through its
 own provider. In particular, rotate an exposed Neo4j password; this repository does not
 perform that external operation and does not modify `.env` automatically.
+
+Retention is configured explicitly; see [data retention](data-retention.md). No legal or
+compliance duration is inferred by the application.

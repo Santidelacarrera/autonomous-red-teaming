@@ -19,6 +19,7 @@ from art_sim.domain.exceptions import (
 from art_sim.observability.sink import (
     InMemoryOperationalTelemetrySink,
     MetricEvent,
+    OperationalMetricName,
     OperationalTelemetrySink,
 )
 from art_sim.observability.telemetry import MetricsRegistry, Tracer
@@ -140,11 +141,11 @@ class SimulationWorker:
             self._heartbeat(claim),
             name=f"lease-heartbeat-{claim.run.run_id}",
         )
-        await self._metric("simulation_started_total", 1.0, tracer)
+        await self._metric("simulations_started_total", 1.0, tracer)
         try:
             if claim.attempt > 1:
-                await self._metric("simulation_recovery_total", 1.0, tracer)
-                await self._metric("simulation_lease_expired_total", 1.0, tracer)
+                await self._metric("simulations_recovered_total", 1.0, tracer)
+                await self._metric("lease_expirations_total", 1.0, tracer)
             if claim.attempt > self._settings.max_recovery_attempts:
                 await self._dead_letters.publish(
                     PoisonJobRecord(
@@ -160,7 +161,7 @@ class SimulationWorker:
                     claim.fencing_token,
                     "MAX_ATTEMPTS_EXCEEDED",
                 )
-                await self._metric("simulation_failed_total", 1.0, tracer)
+                await self._metric("simulations_failed_total", 1.0, tracer)
                 return WorkerRunResult.FAILED
             if not self._catalog.contains(claim.run.scenario_id):
                 return await self._fail(claim, tracer, "SCENARIO_NOT_CONFIGURED")
@@ -211,12 +212,12 @@ class SimulationWorker:
                 )
             except GraphEngineError:
                 await self._metric(
-                    "simulation_result_persist_failure_total",
+                    "result_persistence_failures_total",
                     1.0,
                     tracer,
                 )
                 raise
-            await self._metric("simulation_succeeded_total", 1.0, tracer)
+            await self._metric("simulations_succeeded_total", 1.0, tracer)
             return WorkerRunResult.SUCCEEDED
         except TopologyNotFoundError:
             return await self._fail(claim, tracer, "SHADOW_TOPOLOGY_NOT_FOUND")
@@ -261,7 +262,7 @@ class SimulationWorker:
             )
         except GraphEngineError:
             return WorkerRunResult.NOT_CLAIMED
-        await self._metric("simulation_rejected_total", 1.0, tracer)
+        await self._metric("simulations_cancelled_total", 1.0, tracer)
         return WorkerRunResult.CANCELLED
 
     async def _fail(
@@ -282,7 +283,7 @@ class SimulationWorker:
         if failed.status is SimulationRunStatus.CANCELLED:
             await self._metric("simulation_rejected_total", 1.0, tracer)
             return WorkerRunResult.CANCELLED
-        await self._metric("simulation_failed_total", 1.0, tracer)
+        await self._metric("simulations_failed_total", 1.0, tracer)
         return WorkerRunResult.FAILED
 
     async def _stage_event(
@@ -314,10 +315,11 @@ class SimulationWorker:
         if name.endswith("_total"):
             self._metrics.increment(name, int(value))
         event = MetricEvent(
-            name=name,
+            name=OperationalMetricName(name),
             value=value,
             run_id=tracer.run_id,
             trace_id=tracer.trace_id,
+            worker_id=self._owner_id,
         )
 
         async def emit() -> None:

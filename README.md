@@ -1,215 +1,429 @@
 # Autonomous Red Teaming & Attack Graph Simulator
 
-Defensive BAS/CTEM platform for deterministic, Shadow-only simulation of cloud
-and Kubernetes attack paths. It models topology in Neo4j, analyzes bounded
-paths, creates review-only remediation candidates, and verifies them against an
-in-memory simulated graph. It never executes exploits, obtains credentials,
-applies infrastructure changes, or publishes a pull request without a separate
-explicit integration call.
+## 1. Project Overview
 
-## Architecture
+This repository implements a defensive BAS/CTEM simulation platform for security
+engineers, platform teams, architects, reviewers, and operators. It maps controlled
+AWS/Kubernetes-like assets into a graph, bounds candidate paths before AI planning,
+simulates MITRE ATT&CK-aligned decisions, requires human approval for remediation
+proposals, verifies those proposals against an isolated model, and exposes evidence
+through an API and React command center.
+
+The project is not an exploitation framework, cloud control plane, deployment engine,
+or autonomous offensive tool. Production adapter contracts are present; vendor services
+are not represented as connected when they are not available.
+
+## 2. Security Boundary
+
+> This platform performs defensive, controlled security simulations. It does not execute attacks against real infrastructure.
+
+All topology and execution operate on a Shadow Graph and allow-listed scenarios. Attack
+paths, vulnerabilities, IAM relationships, credentials, remediation, and post-change
+verification are simulated. Verification uses immutable/versioned artifacts and does not
+invoke `terraform apply`, `tofu apply`, `kubectl apply`, cloud APIs, shells, payloads,
+malware, persistence, credential theft, or data exfiltration.
+
+## 3. Architecture
+
+```mermaid
+flowchart TD
+    UI[React Command Center] --> API[FastAPI]
+    API --> IAM[Authentication / Authorization]
+    API --> SVC[Simulation Service]
+    SVC --> DISP[Dispatcher]
+    DISP --> BROKER[External Broker boundary]
+    BROKER --> WORKERS[Worker replicas]
+    WORKERS --> LG[LangGraph workflow]
+    LG --> SG[Shadow Graph]
+    LG --> RISK[Risk Engine]
+    LG --> PATHS[Attack Paths]
+    LG --> BLAST[Blast Radius]
+    LG --> REM[Remediation Review]
+    LG --> VERIFY[Verification]
+    LG --> REPORT[Report]
+    WORKERS --> STORE[Operational Store]
+    API --> STORE
+    AUDIT[Durable Audit / SIEM boundary] -.-> API
+    OBS[External Telemetry boundary] -.-> API
+    OBS -.-> WORKERS
+    SECRETS[Secret Manager boundary] -.-> API
+    LIMIT[Distributed Rate Limiter boundary] -.-> API
+    OIDC[OIDC / JWKS] -.-> IAM
+```
+
+Development composes SQLite and an in-process queue. Production composition rejects
+those adapters and requires externally supplied server-grade implementations.
+
+## 4. Repository Structure
 
 ```text
-FastAPI -> durable run -> dispatcher -> worker -> LangGraph simulation
-                                          -> risk / blast-radius analysis
-                                          -> normalized remediation
-                                          -> durable human approval checkpoint
-                                          -> simulated verification
-                                          -> immutable result + Markdown report
+src/art_sim/
+  agents/           LangGraph recon, planner, supervisor and simulator nodes
+  api/              FastAPI routes, services and composition roots
+  attack/           Shadow graph and deterministic risk calculation
+  blast_radius/     Simulated impact calculation
+  domain/           Validated models, ports and domain exceptions
+  infrastructure/   Neo4j/Cypher and review-only GitHub adapter
+  observability/    Typed metrics, traces and logging boundaries
+  platform/         Lifecycle, persistence ports, health and configuration
+  remediation/      HITL, proposal generation, export and verification
+  reporting/        Markdown evidence reports
+  security/         OIDC, RBAC, MFA, audit, secrets, rate limit and sanitization
+  worker/           Jobs, dispatch, leases, workflow and broker contracts
+frontend/           React/Vite command center
+scripts/            Shadow seed/E2E and artifact-manifest utilities
+tests/              Unit, integration and security suites
+docs/               Architecture, operations, security and recovery documentation
 ```
 
-- `domain`: Pydantic entities, repository contract, and safe errors.
-- `infrastructure`: async Neo4j and GitHub adapters with validation/retry.
-- `agents`: LangGraph recon, planner, supervisor, and mock simulator.
-- `attack`: reproducible in-memory path and risk engines.
-- `remediation`: normalized candidates, exporters, approval, and verification.
-- `worker`: durable claims, checkpoint recovery, Shadow workflow orchestration,
-  immutable result commits, a development process dispatcher, and provider-neutral
-  broker message/transport contracts.
-- `blast_radius`, `reporting`, `observability`: quantitative analysis, report
-  rendering, lightweight spans, agent timings, and aggregate metrics.
+## 5. Core Components
 
-See the real component boundaries and dependency graph in
-[docs/architecture.md](docs/architecture.md).
+- **API / SimulationService:** validates allow-listed scenario requests, persists the run
+  before dispatch, enforces idempotency, pagination, lifecycle and backend permissions.
+- **Dispatcher / Broker:** local development queue or a provider-neutral distributed
+  boundary for Redis Streams, RabbitMQ, Kafka, or SQS adapters supplied by deployment.
+- **Worker / LangGraph:** claims one run with a lease and fencing token, executes only a
+  controlled workflow, checkpoints HITL state, and publishes one immutable result.
+- **Shadow Graph:** isolated, in-memory simulation model; Neo4j is used for parameterized
+  topology reads and deterministic shortest-path reduction, not real exploitation.
+- **Risk, attack path and blast radius engines:** deterministic bounded analysis before
+  data reaches agent planning.
+- **Remediation / verification / reporting:** generates review-only IaC/policy candidates,
+  verifies their simulated effect, and renders correlated evidence.
+- **Operational Store:** SQLite implementation for development; server-grade transaction,
+  CAS, lease, fencing, checkpoint and artifact contract for production.
+- **Audit / telemetry / identity / secrets:** typed provider-neutral boundaries with
+  fail-closed production capability checks and no implicit vendor connection.
 
-The operational layer persists secret-free `SimulationRun` records, execution leases,
-append-only audit events, immutable results, and versioned workflow snapshots through
-provider-neutral ports. The baseline SQLite adapter uses WAL and transactional
-compare-and-set for a single-node deployment; it remains separate from Neo4j's Shadow
-topology. The official async LangGraph saver shares the development database file but
-owns independent checkpoint tables.
-
-## Security boundaries
-
-- Only the `shadow` environment is accepted by the orchestrator.
-- Graph data passed toward planning is allow-listed; names, tags, logs,
-  relationship properties, scanner output, and Kubernetes payloads are omitted.
-- `CONTAINER_ESCAPE`, `CREDENTIAL_ACCESS`, and `IAM_ASSUME_ROLE` are simulated
-  graph relations, not operational capabilities.
-- Remediation exporters generate review artifacts only. Terraform/OpenTofu are
-  `locals` blocks, IAM output is unattached, and Gatekeeper output is opt-in.
-- Human approval is a checkpointed LangGraph interrupt before simulated
-  verification. Rejected candidates end without applying a modeled change.
-- Verification removes an edge only from an immutable in-memory graph copy and
-  recomputes path reachability, risk, and blast radius.
-- Approval evidence is HMAC-bound to the workflow and remediation; forged state
-  cannot unlock simulated verification. The workflow enforces a typed lifecycle.
-
-## Setup and base Shadow E2E
-
-Use Python 3.11+ and configure a Shadow-only Neo4j database in `.env`:
-
-```dotenv
-NEO4J_URI=neo4j+s://example.databases.neo4j.io
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=replace-me
-```
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-.\.venv\Scripts\python.exe scripts\seed_db.py
-.\.venv\Scripts\python.exe scripts\run_e2e.py
-```
-
-`seed_db.py` is idempotent and only creates the sample Shadow topology. The
-base E2E reads that graph, runs mock simulation, and renders a remediation
-candidate in memory; it does not export, apply, or publish it.
-
-## Advanced simulated flow
-
-The unit end-to-end scenario covers a synthetic path:
+## 6. Simulation Lifecycle
 
 ```text
-Container -> CONTAINER_ESCAPE -> Node -> CREDENTIAL_ACCESS
-          -> SyntheticCredential -> IAM_ASSUME_ROLE -> Role -> ACCESS -> Crown Jewel
+CREATED -> RUNNING -> WAITING_APPROVAL -> RESUMING -> SUCCEEDED
+              |              |               |
+              +--------------+---------------+--> FAILED / CANCELLED / REJECTED
 ```
 
-It verifies that a path exists before, the chosen relation is removed only in a
-graph copy after approval, path reachability disappears, risk decreases, blast
-radius decreases, and a Markdown report is rendered from the resulting data.
+`CREATED` is durably accepted; `RUNNING` has a fenced owner; `WAITING_APPROVAL` has a
+checkpoint but no applied change; `RESUMING` continues after one CAS-protected decision;
+`SUCCEEDED` has one immutable artifact set. `FAILED`, `CANCELLED`, `REJECTED`, and the
+legacy `COMPLETED` value are terminal. Exhausted retries terminate as `FAILED` with
+`MAX_ATTEMPTS_EXCEEDED`; it is an error code, not a separate persisted status.
 
-Supported review exporters are JSON, Terraform HCL, OpenTofu HCL, OPA/Rego, and
-Gatekeeper `ConstraintTemplate`. PDF is intentionally not included because no
-PDF renderer dependency is present; Markdown is the canonical report artifact.
+See [state machine](docs/state-machine.md).
 
-## Risk scoring
+## 7. Distributed Execution
 
-`RiskScoringSettings` centralizes all weights. The bounded 0–100 score sums
-criticality, CVSS, relation severity, crown-jewel reachability, credential
-exposure, and container escape, then subtracts a configurable path-length
-penalty. `RiskBreakdown` stores every component; no opaque score is emitted.
-CVSS scores are constrained to `0.0..10.0`; vectors are structurally validated as
-CVSS v3.0/v3.1. A complete vector-to-score consistency parser is intentionally out
-of scope; see [hardening audit](docs/hardening.md) for the formula and limitation.
+`SimulationJobV1` is strict, versioned, size-bounded, deterministic by logical attempt,
+and contains no credentials. The distributed contract covers publish, receive,
+acknowledge, negative acknowledgement, delayed retry, visibility extension, delivery
+attempt, correlation, health, backpressure (`max_in_flight`) and graceful close.
 
-## Hardening audit
+The operational store, not the broker alone, supplies correctness: one live owner,
+expiring lease, heartbeat, monotonic fencing token, stale-worker rejection, bounded
+retry/backoff/jitter, poison-job evidence, DLQ boundary, duplicate-delivery idempotency,
+and cooperative durable cancellation. See [distributed execution](docs/distributed-execution.md)
+and [dispatcher contract](docs/dispatcher.md).
 
-The phase-6 audit adds regression coverage for deep-copy isolation, parallel Shadow
-branches, approval bypass attempts, forged state, lifecycle transitions, CVSS input,
-and bounded traversal edge cases. See [docs/hardening.md](docs/hardening.md).
+## 8. Security Architecture
 
-## Configuration and development
+Production requires OIDC with HTTPS JWKS, asymmetric algorithm allow-list, exact issuer
+and audience, required `exp`/`nbf`/`iat`/`sub`, rotating key cache, locally derived RBAC,
+and an explicit trusted MFA claim for approval. Sensitive approval decisions use HMAC
+evidence, lifecycle checks, CAS and replay protection. Rate limiting is per network key,
+subject and sensitive endpoint; production rejects process-local limiting.
 
-`NEO4J_PASSWORD`, GitHub tokens, and `approval_secret` are secrets. The approval
-workflow requires an injected HMAC secret of at least 32 bytes and fails closed if it
-is absent. `.env` is ignored by Git; see [configuration](docs/configuration.md) for the
-current settings boundary and local `EnvironmentSecretProvider`.
+Secrets are referenced by name, resolved asynchronously at startup, length-validated,
+redacted, and excluded from API responses, jobs, audit and telemetry. HTTP controls
+include request-size limits, restrictive CORS, generic error envelopes, security headers,
+request correlation and production HSTS. See [security architecture](docs/security-architecture.md).
 
-Set `ART_SIM_APPROVAL_SECRET` to at least 32 bytes before composing a production-style
-approval workflow. `OperationalSettings` selects `development`, `staging`, or
-`production` explicitly and validates its SQLite location, logging level, workflow
-version, and secret name before work begins.
+## 9. Persistence
 
-The primary executable is [scripts/run_e2e.py](scripts/run_e2e.py): it reads the
-configured Shadow graph, runs LangGraph's mock simulation, and renders an artifact in
-memory. `seed_db.py` is a separate idempotent **write** helper restricted to a Shadow
-database; do not run it against production.
+### Development
 
-## API platform
+`SqliteOperationalStore` uses WAL and transactional CAS for a single-node development
+runtime. It is explicitly `SINGLE_NODE` and is rejected by production composition.
 
-The versioned FastAPI adapter lives in `art_sim.api`; it is thin and delegates durable
-run creation, approval CAS, and reads to application services. Start its development
-composition with:
+### Production
+
+`ServerOperationalStore` and `ServerDatabaseSettings` define a PostgreSQL/equivalent
+boundary for transactions, row locking/CAS, concurrent leases, fencing, durable state,
+immutable artifacts, correlated audit, checkpoints and recovery. No PostgreSQL adapter or
+database connection is included; this capability is `READY WITH EXTERNAL DEPENDENCY`.
+
+## 10. API
+
+`/health` and `/readiness` are public. Other routes require bearer authentication; object
+data is limited to the controlled scenario catalog and persisted run identifiers.
+
+| Method | Path | Purpose | Required permission / lifecycle |
+| --- | --- | --- | --- |
+| GET | `/health` | Process liveness only | Public |
+| GET | `/readiness` | Required dependency readiness | Public; 503 when unavailable |
+| GET | `/api/v1/identity` | Verified caller context | `simulation:read` |
+| POST | `/api/v1/logout` | End local session context | `simulation:read` |
+| GET | `/api/v1/scenarios` | Allow-listed Shadow scenarios | `simulation:read` |
+| POST | `/api/v1/simulations` | Create/idempotently dispatch | `simulation:create`; configured scenario |
+| GET | `/api/v1/simulations` | Paginated run list | `simulation:read` |
+| GET | `/api/v1/simulations/{run_id}` | Run lifecycle | `simulation:read` |
+| POST | `/api/v1/simulations/{run_id}/approval` | Approve/reject checkpoint | approve/reject permission; waiting state; MFA when configured |
+| POST | `/api/v1/simulations/{run_id}/cancel` | Cooperative cancellation | `simulation:cancel`; non-terminal run |
+| GET | `/api/v1/simulations/{run_id}/risk` | Risk evidence | `risk:read`; result available |
+| GET | `/api/v1/simulations/{run_id}/attack-paths` | Simulated paths | `attack_path:read`; result available |
+| GET | `/api/v1/simulations/{run_id}/blast-radius` | Simulated impact | `blast_radius:read`; result available |
+| GET | `/api/v1/simulations/{run_id}/remediations` | Review-only candidates | `remediation:read`; result available |
+| GET | `/api/v1/simulations/{run_id}/verification` | Simulated verification | `verification:read`; result available |
+| GET | `/api/v1/simulations/{run_id}/report` | Markdown report | `report:read`; result available |
+| GET | `/api/v1/simulations/{run_id}/events` | Safe timeline | `audit:read` |
+| GET | `/api/v1/security/status` | Security state/audit summary | `security:admin` |
+
+## 11. Frontend
+
+The React/Vite command center authenticates through an injected OIDC client boundary,
+protects routes, hides actions that the role cannot perform, polls only active runs with
+bounded backoff, supports cancellation, and stops polling terminal states. It talks only
+to the API and cannot invoke infrastructure tooling. Development bearer identity is
+available only in development builds. See [frontend](docs/frontend.md).
+
+## 12. Configuration
+
+Copy `.env.example` for local development. `.env.production.example` contains only
+non-secret provider references/placeholders; actual credentials belong in an external
+secret manager. The authoritative loaders are `SecuritySettings.from_environment()` and
+`ProductionDependencySettings.from_environment()`.
+
+Key groups are:
+
+- `ART_ENV`, `ART_SIM_OPERATIONAL_DB`, `ART_AUTH_MODE`;
+- `ART_OIDC_*`, `ART_CORS_ALLOWED_ORIGINS`, `ART_*_REQUESTS_PER_MINUTE`;
+- `ART_BROKER_*`, `ART_DATABASE_*`, `ART_SECRET_PROVIDER`;
+- `ART_AUDIT_*`, `ART_TELEMETRY_PROVIDER`, `ART_RATE_LIMIT_PROVIDER`;
+- `ART_*_RETENTION_DAYS`, `ART_TLS_TERMINATED_UPSTREAM`,
+  `ART_TRUSTED_PROXY_HOPS`, `ART_MAX_REQUEST_BYTES`;
+- local Shadow E2E only: `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`;
+- frontend: `VITE_API_BASE_URL`, `VITE_BACKEND_URL`, `VITE_AUTH_MODE`,
+  `VITE_POLL_INTERVAL_MS`.
+
+See [configuration](docs/configuration.md) for validation and trust boundaries.
+
+## 13. Local Development
 
 ```powershell
-$env:ART_ENV = "development"
-python -m uvicorn art_sim.api.main:app --host 127.0.0.1 --port 8080
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.lock
+.\.venv\Scripts\python.exe -m pip install -e . --no-deps
+Copy-Item .env.example .env
+.\.venv\Scripts\python.exe -m uvicorn art_sim.api.main:app --reload --port 8080
 ```
 
-Use the OpenAPI document at `/openapi.json`. Development authentication requires a
-deliberate header token and is rejected for production composition. Detailed endpoint,
-security, idempotency, lifecycle, and persisted-result semantics are in
-[API documentation](docs/api.md). The local composition starts an asynchronous process
-worker, resumes durable checkpoints after restart, and serves results only after
-terminal `SUCCEEDED`.
-
-Identity is provider-neutral and authorization is permission-based in the backend.
-Local development retains the explicit development bearer format; non-development
-profiles require an externally composed OIDC/JWT provider and fail closed. See the
-[security architecture](docs/security-architecture.md), [authentication](docs/authentication.md),
-[authorization](docs/authorization.md), and [security operations](docs/security-operations.md).
-
-Production has a separate `create_production_app(...)` dependency-injection root. It
-accepts only explicit OIDC, distributed rate-limiter, durable audit, secret-provider,
-operational-store, and distributed-dispatcher dependencies; it rejects the local process
-dispatcher, SQLite, environment-only secrets, and process telemetry. It does not
-construct or pretend to connect Redis, a broker, SIEM, a cloud secret manager, or a
-server database. Required MFA derives exclusively from an
-explicitly configured claim in a signature-verified OIDC token.
-
-## Command Center frontend
-
-The React/Vite Command Center is an API-only dark operations interface for
-observing and requesting **defensive, Shadow-only** simulations. It shows
-bounded API pages, controlled scenario creation, run detail, API-provided risk,
-the existing simulated approval gate, and persisted analysis results. The detail view
-polls all active lifecycle states, stops at terminal state, and uses bounded backoff for
-transient network or rate-limit responses. Results not yet persisted by a worker are
-explicitly shown as unavailable; the UI never creates placeholder security findings or
-attack paths.
+In another terminal:
 
 ```powershell
-# terminal 1
-$env:ART_ENV = "development"
-python -m uvicorn art_sim.api.main:app --host 127.0.0.1 --port 8080
-
-# terminal 2
 Set-Location frontend
 npm ci
 npm run dev
 ```
 
-Vite proxies the local API by default. The protected development login uses the
-existing memory-only `development:<role>:<subject>` bearer format and validates it
-against the backend identity endpoint. See
-[frontend documentation](docs/frontend.md) for roles, API configuration,
-deployment boundary, tests, and the no-infrastructure-action guarantee.
-
-## Limitations and production gaps
-
-The repository now contains a durable single-process development worker with execution
-CAS, leases, bounded recovery, official LangGraph checkpoint resume, restart-safe HITL,
-immutable result persistence, fencing tokens, cooperative cancellation, versioned broker
-messages, and external-adapter contracts. It is not a distributed production service. A real
-broker/dispatcher, separately deployed workers, server-database coordination, managed
-secrets, external telemetry, and deployment configuration remain external work. See
-[worker architecture](docs/worker.md), [workflow orchestration](docs/workflow-orchestration.md),
-[result persistence](docs/result-persistence.md), and
-[production readiness](docs/production-readiness.md).
-Phase 12 details are in [distributed execution](docs/distributed-execution.md),
-[worker recovery](docs/worker-recovery.md), [operational store](docs/operational-store.md),
-and [dispatcher](docs/dispatcher.md).
-The exact tested surface is in [test matrix](docs/test-matrix.md) and the simulator's
-own attack surface is in [threat model](docs/threat-model.md).
-
-Any credential exposed outside its intended boundary, including a Neo4j password, must
-be rotated by an operator. The project does not print that value, modify `.env`, or
-perform an external rotation automatically.
-
-## Validation
+Validation and the optional Neo4j-backed Shadow E2E:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest
 .\.venv\Scripts\python.exe -m ruff check .
 .\.venv\Scripts\python.exe -m mypy .
+.\.venv\Scripts\python.exe scripts/seed_db.py
+.\.venv\Scripts\python.exe scripts/run_e2e.py
 ```
+
+The seed/E2E scripts require an explicitly configured local Shadow Neo4j instance and do
+not mutate cloud or Kubernetes infrastructure.
+
+## 14. Production Deployment
+
+```text
+Internet
+  -> TLS / API Gateway / WAF
+  -> FastAPI replicas
+  -> Distributed Broker
+  -> Worker replicas
+  -> PostgreSQL/equivalent
+  -> Secret Manager + OIDC + Distributed Rate Limiter + SIEM + OpenTelemetry
+```
+
+Every component after the application image is an external dependency. The repository
+does not deploy it. Production requires migrations before traffic, readiness gating,
+graceful drain, backup/restore verification, rollback to a compatible image/schema, and
+separate worker/API scaling. See [deployment](docs/deployment.md).
+
+## 15. Observability
+
+Typed events expose safe structured logs, metrics and traces correlated by `request_id`,
+`run_id`, `trace_id`, and `worker_id`; a fencing token is included only in operational
+ownership evidence. The metric vocabulary includes started/succeeded/failed/cancelled/
+recovered simulations, duration, lease expiry, fencing rejection, approval latency,
+result persistence, broker/database failures, poison jobs, retries and active workers.
+Production requires an external telemetry adapter; no OpenTelemetry or Prometheus backend
+is claimed as connected.
+
+## 16. Reliability
+
+External calls use bounded retry with exponential backoff and jitter. Durable ownership
+uses leases, heartbeats and fencing. Native LangGraph checkpoints support restart at HITL
+boundaries. Cancellation is durable and CAS-controlled. Result artifacts are immutable
+and publication rolls back on workflow/version conflict. API and worker shutdown drain
+accepted work and close injected dependencies.
+
+## 17. Testing
+
+The Phase 14 local audit executes unit, integration, security, concurrency, recovery,
+frontend and controlled Shadow E2E suites. The current verified count is **121 backend
+tests** and **19 frontend tests**; Ruff and strict Mypy (99 Python files), frontend
+lint/typecheck/build, `pip-audit`, and `npm audit` pass. Docker image execution remains
+blocked by the local
+Docker daemon and is not reported as passed. See [test matrix](docs/test-matrix.md).
+
+## 18. Security Testing
+
+Targeted tests cover OIDC/JWT/JWKS rotation, issuer/audience/time/algorithm checks, RBAC,
+MFA, approval HMAC and replay/CAS behavior, secret redaction, process-vs-distributed
+capabilities, lease expiry, fencing, stale workers, duplicate delivery, poison jobs,
+cancellation races, result publication races, checkpoint corruption and restart recovery.
+
+## 19. Threat Model
+
+The [threat model](docs/threat-model.md) records assets, attackers, preconditions, attack
+surfaces, controls, detection, residual risk and mitigation for worker compromise, replay,
+races, credential leakage, malicious scenarios, API abuse, tampering and denial of service.
+
+## 20. Production Readiness
+
+See the objective [production-readiness matrix](docs/production-readiness.md). Application
+boundaries are implemented, but mandatory broker, server database, Secret Manager, OIDC
+tenant, distributed rate limiter, SIEM, telemetry backend and TLS edge are not connected.
+Current overall status: **READY WITH EXTERNAL DEPENDENCY**.
+
+### Validated locally
+
+Application tests/static analysis, frontend build, dependency audits, Shadow E2E, source
+SBOMs/hashes, local liveness/readiness, immutable base-image resolution and immutable
+GitHub Action references.
+
+### Validated with external infrastructure
+
+None. No production vendor service or hosted attestation result was available to this
+audit.
+
+### Ready with external dependency
+
+OIDC validation, production composition, distributed-worker/store/broker/secret/limiter/
+audit/telemetry boundaries, TLS edge contract, Anchore gates and GitHub provenance config.
+
+### Not yet validated
+
+Concrete production adapters, migrations, deployment, container runtime/image scan/image
+SBOM, hosted provenance verification, backup/restore and multi-region recovery.
+
+## 21. Operational Runbooks
+
+- [Startup, shutdown and outage response](docs/operations.md)
+- [Worker recovery](docs/worker-recovery.md)
+- [Broker/dispatcher semantics](docs/dispatcher.md)
+- [Disaster recovery](docs/disaster-recovery.md)
+- [Security operations and secret rotation](docs/security-operations.md)
+- [Deployment and rollback](docs/deployment.md)
+
+## 22. Supply Chain Security
+
+Python has exact runtime and development lockfiles; npm uses `package-lock.json`. CI runs
+Ruff, Mypy, Pytest, frontend checks, `pip-audit`, `npm audit`, Gitleaks, wheel build,
+CycloneDX SBOM generation, SHA-256 evidence, container build and Anchore image scan.
+The Phase 14 audit generated and validated local CycloneDX Python/frontend SBOMs plus a
+SHA-256 manifest under ignored `var/audit/`; image scanning still requires a built image.
+All Actions use immutable commit SHAs. GitHub artifact provenance is configured for
+`push`, but remains unvalidated until a hosted workflow emits and independently verifies
+an attestation.
+
+## 23. Docker
+
+```powershell
+docker build -t art-sim:local .
+docker run --rm --read-only --tmpfs /tmp -p 8080:8080 art-sim:local
+```
+
+The multi-stage image installs the runtime lock only, runs as UID/GID 10001, exposes one
+writable application directory, excludes `.env`, defines `/health`, and uses `SIGTERM`.
+The base image uses an exact patch tag plus an immutable manifest-list digest. The latest
+local build attempt is `BLOCKED BY LOCAL ENVIRONMENT` because Docker Desktop/Linux daemon
+is stopped.
+
+## 24. CI/CD
+
+`.github/workflows/ci.yml` defines frontend lint/typecheck/test/build/audit, backend
+Ruff/Mypy/Pytest/audit/wheel, Gitleaks, SBOMs, artifact hashing, container build, image
+scanning and GitHub artifact attestation. Third-party Actions are commit-pinned. A workflow
+definition is not proof of a successful hosted run; verify the workflow and attestation
+before promoting an artifact.
+
+## 25. Failure Modes
+
+| Failure | Expected behavior |
+| --- | --- |
+| Broker not configured | Startup composition rejection / `BROKER_NOT_CONFIGURED` |
+| Broker unavailable | Bounded retry, readiness 503, safe `BROKER_UNAVAILABLE` |
+| Broker operation rejected | Safe `BROKER_OPERATION_FAILED`; no internal detail |
+| Database unavailable | Readiness failure; no success publication |
+| Secret unavailable | Startup/readiness fail closed |
+| Worker crash | Lease expiry and fenced recovery |
+| Stale worker | Fencing rejection |
+| Duplicate message | Idempotent claim/no duplicate result |
+| Poison job | Safe DLQ record and terminal failure |
+| Approval replay/race | CAS rejection; one decision |
+| Cancel race | Deterministic terminal CAS; no result after cancellation wins |
+| Corrupt checkpoint | Explicit safe recovery failure |
+| Telemetry/audit unavailable | Readiness failure in production; no secret fallback payload |
+
+## 26. Security Guarantees
+
+The code path has no arbitrary command execution, real exploit execution, remediation
+apply, cloud/Kubernetes mutation, credential exfiltration, or offensive persistence.
+Backend authorization is authoritative. Production secrets fail closed. Fencing rejects
+stale ownership, successful results are immutable, and audit schemas reject credential-
+shaped metadata. These guarantees do not replace deployment hardening or external-service
+security.
+
+## 27. Known Limitations
+
+- No concrete Redis/RabbitMQ/Kafka/SQS transport is connected.
+- No PostgreSQL/equivalent operational-store adapter is implemented.
+- No AWS/Vault/GCP/Azure secret-manager adapter is connected.
+- No SIEM, OpenTelemetry/Prometheus, distributed limiter, or real OIDC tenant is connected.
+- TLS/API gateway/WAF, backups, retention jobs, multi-region coordination and deployment
+  are external.
+- Python locks are exact but not hash-complete.
+- Local Docker build/start/health and image scan were not executed because the daemon is
+  unavailable.
+- GitHub artifact provenance is configured but has no hosted execution/verification
+  evidence; container provenance is not configured.
+
+## 28. Roadmap
+
+### Implemented
+
+Simulation-only graph/agent workflow, HITL, API/UI, local durable worker, broker/database/
+secret/audit/telemetry/rate-limit contracts, production capability checks, readiness,
+failure/concurrency/recovery tests, lockfiles and CI supply-chain gates.
+
+### External Integration
+
+Implement and certify deployment-owned adapters, migrations, OIDC tenant, TLS edge,
+retention jobs, alerting, backups, restore drills and hosted CI evidence.
+
+### Future
+
+Multi-region ownership semantics, organization-specific compliance retention, container
+provenance, independent attestation verification and measured capacity/load targets.
+Future work must preserve simulation-only scope.
+
+## 29. License
+
+No `LICENSE` file is present. No license or redistribution grant is implied by this
+repository.

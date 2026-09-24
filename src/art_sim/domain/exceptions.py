@@ -83,3 +83,27 @@ class ResultNotAvailableError(GraphEngineError):
 
 class WorkerStateError(GraphEngineError):
     """Raised when a durable worker lifecycle or ownership invariant is violated."""
+
+
+class ExternalDependencyError(GraphEngineError):
+    """Base failure for an external production dependency with a safe public code."""
+
+    public_code = "DEPENDENCY_OPERATION_FAILED"
+
+
+class DependencyNotConfiguredError(ExternalDependencyError):
+    """Raised when an external dependency has no deployment configuration."""
+
+    public_code = "DEPENDENCY_NOT_CONFIGURED"
+
+
+class DependencyUnavailableError(ExternalDependencyError):
+    """Raised when a configured external dependency cannot currently be reached."""
+
+    public_code = "DEPENDENCY_UNAVAILABLE"
+
+
+class DependencyOperationError(ExternalDependencyError):
+    """Raised when a reachable dependency rejects or cannot complete an operation."""
+
+    public_code = "DEPENDENCY_OPERATION_FAILED"

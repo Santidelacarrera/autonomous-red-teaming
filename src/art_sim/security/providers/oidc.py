@@ -124,7 +124,7 @@ class OidcIdentityProvider:
                 audience=self._settings.audience,
                 issuer=self._settings.issuer,
                 leeway=self._settings.clock_skew_seconds,
-                options={"require": ["exp", "iat", "iss", "aud", "sub"]},
+                options={"require": ["exp", "nbf", "iat", "iss", "aud", "sub"]},
             )
             return self._identity(claims)
         except AuthenticationError:
@@ -135,6 +135,15 @@ class OidcIdentityProvider:
     async def get_identity(self, authorization: str | None) -> Identity:
         """Alias authentication for provider-neutral callers."""
         return await self.authenticate(authorization)
+
+    async def health_check(self) -> None:
+        """Refresh public signing keys so readiness reflects IdP/JWKS availability."""
+        await self._refresh_keys(force=True)
+
+    async def close(self) -> None:
+        """Close only an injected client; per-request clients are self-managed."""
+        if self._client is not None:
+            await self._client.aclose()
 
     async def _key(self, kid: str) -> dict[str, Any]:
         if monotonic() >= self._cache_deadline or kid not in self._keys:

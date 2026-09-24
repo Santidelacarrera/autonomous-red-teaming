@@ -1,5 +1,8 @@
 # Phase 11 completion record
 
+> Historical record. Phase 12 implemented the cancellation and distributed execution
+> gaps listed below; current status is authoritative in `production-readiness.md`.
+
 ## Implemented
 
 - Thin API-to-dispatcher hand-off after durable, idempotent run creation.

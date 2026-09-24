@@ -1,38 +1,53 @@
-# Operations runbook
+# Operations runbooks
 
-## Start
+## Startup
 
-Create a virtual environment, install `.[dev]`, set `ART_SIM_APPROVAL_SECRET` to a
-non-empty value of at least 32 bytes, and initialize `SqliteOperationalStore` at the
-configured database path before accepting work. Compose `HumanApprovalWorkflow` with
-that secret and `sqlite_langgraph_checkpointer()` for a durable native LangGraph saver.
-The existing E2E is invoked with
-`python scripts/run_e2e.py` and remains Shadow read/simulate only.
+Validate `SecuritySettings` and `ProductionDependencySettings`, construct only certified
+adapters, retrieve/validate the approval secret, initialize/migrate the store, then enable
+readiness. A missing/short secret or unsuitable capability stops startup. A later external
+outage returns readiness 503 without exposing endpoints, credentials or exception text.
 
-## Stop and recovery
+## Shutdown
 
-Stop accepting new runs first. Finish a short operation or persist a `WorkflowCheckpoint`
-and `SimulationRun` status before process termination. Waiting-approval runs are safe to
-leave paused; resume requires the same database and signing secret. Do not delete the
-SQLite WAL files during recovery.
+Remove the replica from readiness, stop accepting publishes, drain bounded in-flight
+work, persist a safe checkpoint, stop heartbeats, release owned leases and close broker,
+telemetry, audit, limiter, identity, secret and database clients. SIGTERM is the container
+stop signal. Never force a terminal success during shutdown.
 
-## Health and logs
+## Broker outage
 
-`HealthService.health()` is process liveness. `readiness()` runs injected dependency
-probes and returns `not_ready` without secrets when a dependency fails. A future HTTP
-adapter may map these to `/health` and `/readiness`. `StructuredLoggingTelemetrySink`
-emits JSON containing run ID, trace ID, component, status and duration only.
+Confirm `BROKER_UNAVAILABLE`, pause new simulation creation at the edge if needed, retain
+durable `CREATED` runs, monitor retry/backoff and restore the adapter. Do not manually
+republish without the stable message ID. Route exhausted poison deliveries to the real
+DLQ and inspect only safe metadata.
 
-## Failed run / stuck approval
+## Database outage
 
-Inspect `SimulationRun`, then list append-only audit events by `run_id`. A waiting run
-may be decided once through the coordinator. A rejected, failed, or completed run is
-terminal. Do not change rows directly: use a formal recovery event and a new run when
-policy requires another simulation.
+Readiness must fail. Stop worker claims/publication, preserve broker messages and avoid
+acknowledging work that was not durably committed. Restore database service, validate
+schema and fencing monotonicity, then resume consumers gradually.
 
-## Dependency, checkpoint, or secret failure
+## Secret rotation/outage
 
-Readiness remains false for a failed dependency. A missing/corrupt checkpoint raises an
-explicit error and must not be resumed. A missing or short approval secret raises
-`ConfigurationError`; do not start sensitive workflows. Database recovery is detailed
+On outage, fail startup/readiness closed and never fall back to `.env` in production.
+For rotation, stage a new version, atomically reload all replicas, verify readiness and
+approval behavior, then revoke the old version. Rotate immediately after suspected leak.
+
+## Worker and approval recovery
+
+For a crashed worker, wait for lease expiry; a new owner receives a higher fencing token.
+For `WAITING_APPROVAL`, preserve checkpoint and HMAC material, allow exactly one decision,
+then dispatch `RESUMING`. A missing/corrupt checkpoint fails safely; create a new run only
+after evidence preservation and operator review.
+
+## Dead-letter handling
+
+Quarantine the message, record reason/run/message/attempt only, verify scenario and
+workflow compatibility, correct the root cause, and create an authorized new logical
+attempt. Never copy raw payloads or credentials into tickets/logs.
+
+## Rollback and recovery
+
+Stop dispatch, drain, back up current evidence, roll back to a schema-compatible image,
+run readiness and Shadow smoke tests, then resume. Follow the controlled restore sequence
 in [disaster recovery](disaster-recovery.md).

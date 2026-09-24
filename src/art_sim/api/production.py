@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
 from fastapi import FastAPI
 
@@ -16,11 +18,20 @@ from art_sim.api.services import (
     SimulationService,
 )
 from art_sim.domain.exceptions import ConfigurationError
-from art_sim.observability.sink import OperationalTelemetrySink, TelemetryCapability
+from art_sim.observability.sink import (
+    ExternalOperationalTelemetrySink,
+    TelemetryCapability,
+)
 from art_sim.platform.config import OperationalSettings, RuntimeEnvironment
 from art_sim.platform.health import HealthService
-from art_sim.platform.ports import OperationalStore, OperationalStoreCapability
-from art_sim.security.audit import AuditDurability, DurableSecurityAuditSink
+from art_sim.platform.ports import OperationalStoreCapability, ServerOperationalStore
+from art_sim.platform.production_config import ProductionDependencySettings
+from art_sim.security.audit import (
+    AuditDurability,
+    DurableSecurityAuditSink,
+    SecurityAuditEvent,
+    SecurityEventType,
+)
 from art_sim.security.config import AuthenticationProviderKind, SecuritySettings
 from art_sim.security.identity import IdentityProvider, IdentityProviderCapability
 from art_sim.security.providers.oidc import OidcSettings
@@ -38,11 +49,12 @@ def create_production_app(
     rate_limiter: DistributedRateLimiter | None,
     security_audit: DurableSecurityAuditSink | None,
     secret_provider: ExternalSecretProvider | None,
-    store: OperationalStore | None,
+    store: ServerOperationalStore | None,
     dispatcher: DistributedSimulationDispatcher | None,
-    telemetry: OperationalTelemetrySink | None = None,
+    telemetry: ExternalOperationalTelemetrySink | None = None,
     security_settings: SecuritySettings,
     operational_settings: OperationalSettings,
+    dependency_settings: ProductionDependencySettings | None = None,
     scenario_ids: tuple[str, ...],
 ) -> FastAPI:
     """Compose production from explicit real adapters and validate them before serving.
@@ -57,6 +69,13 @@ def create_production_app(
         raise ConfigurationError("Production composition requires the production profile")
     if operational_settings.environment is not RuntimeEnvironment.PRODUCTION:
         raise ConfigurationError("Operational settings must use the production profile")
+    if dependency_settings is None:
+        raise ConfigurationError("Production dependency configuration is required")
+    if (
+        dependency_settings.secrets.approval_hmac_secret_name
+        != operational_settings.approval_secret_name
+    ):
+        raise ConfigurationError("Approval secret reference does not match production settings")
     if security_settings.authentication_provider is not AuthenticationProviderKind.OIDC:
         raise ConfigurationError("Production composition requires OIDC authentication")
     if (
@@ -104,15 +123,59 @@ def create_production_app(
     ):
         raise ConfigurationError("Production requires external operational telemetry")
 
-    async def store_ready() -> None:
-        await store.list_runs(limit=1)
+    async def secret_ready() -> None:
+        await secret_provider.health_check()
+        value = await operational_settings.approval_secret_async(secret_provider)
+        del value
+
+    readiness = HealthService(
+        {
+            "database": store.health_check,
+            "broker": dispatcher.health_check,
+            "secret_provider": secret_ready,
+            "identity_provider": authenticator.health_check,
+            "rate_limiter": rate_limiter.health_check,
+            "audit": security_audit.health_check,
+            "telemetry": telemetry.health_check,
+        }
+    )
+
+    async def audit_startup_failure() -> None:
+        """Attempt safe evidence without replacing the original startup failure."""
+        try:
+            await security_audit.append(
+                SecurityAuditEvent(
+                    event_type=SecurityEventType.SECURITY_CONFIGURATION_FAILURE,
+                    request_id=f"startup-{uuid4()}",
+                    source="startup",
+                    result="failed",
+                )
+            )
+        except Exception:  # noqa: BLE001 - unavailable audit cannot allow startup
+            return
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        approval_secret = await operational_settings.approval_secret_async(secret_provider)
-        del approval_secret
-        await store.initialize()
-        yield
+        try:
+            approval_secret = await operational_settings.approval_secret_async(secret_provider)
+            del approval_secret
+            await store.initialize()
+        except Exception:
+            await audit_startup_failure()
+            raise
+        try:
+            yield
+        finally:
+            await asyncio.gather(
+                dispatcher.close(),
+                telemetry.close(),
+                security_audit.close(),
+                rate_limiter.close(),
+                authenticator.close(),
+                secret_provider.close(),
+                store.close(),
+                return_exceptions=True,
+            )
 
     return create_app(
         SimulationService(
@@ -122,7 +185,7 @@ def create_production_app(
             dispatcher,
         ),
         ApprovalService(store, dispatcher),
-        HealthService({"operations_store": store_ready}),
+        readiness,
         authenticator,
         lifespan,
         security_settings=security_settings,

@@ -54,6 +54,12 @@ class DistributedRateLimiter(RateLimiter, Protocol):
     This project intentionally provides no fake Redis or edge adapter.
     """
 
+    async def health_check(self) -> None:
+        """Verify the shared atomic backend without consuming caller capacity."""
+
+    async def close(self) -> None:
+        """Release shared-backend connections during graceful shutdown."""
+
 
 class InMemoryRateLimiter:
     """Concurrency-safe rolling-window limiter for development and one process only."""

@@ -212,6 +212,7 @@ class _OidcFixture:
             "aud": self.audience,
             "sub": "oidc-user",
             "iat": now,
+            "nbf": now - timedelta(seconds=1),
             "exp": now + timedelta(minutes=5),
             "roles": ["operator"],
             "amr": ["pwd", "mfa"],
@@ -269,6 +270,7 @@ async def test_oidc_rejects_invalid_signature_unknown_kid_and_none_algorithm() -
         "aud": fixture.audience,
         "sub": "attacker",
         "iat": now,
+        "nbf": now - timedelta(seconds=1),
         "exp": now + timedelta(minutes=5),
         "roles": ["admin"],
     }

@@ -83,6 +83,12 @@ class IdentityProvider(Protocol):
 
     async def get_identity(self, authorization: str | None) -> Identity: ...
 
+    async def health_check(self) -> None:
+        """Verify public identity metadata/key availability without a caller token."""
+
+    async def close(self) -> None:
+        """Release identity-provider client resources."""
+
 
 Authenticator = IdentityProvider
 Principal = Identity

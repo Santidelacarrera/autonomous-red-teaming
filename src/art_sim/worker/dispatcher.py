@@ -10,9 +10,14 @@ from uuid import UUID
 from art_sim.domain.exceptions import ConfigurationError, WorkerStateError
 from art_sim.platform.models import SimulationRunStatus
 from art_sim.platform.ports import OperationalStore
+from art_sim.worker.broker import (
+    BrokerNotConfiguredError,
+    BrokerOperationError,
+    BrokerUnavailableError,
+)
 from art_sim.worker.jobs import CancellationReceipt, DispatchReceipt, SimulationJobV1
 from art_sim.worker.ports import BrokerTransport, DispatcherScope
-from art_sim.worker.retry import RetryPolicy, retry_transient
+from art_sim.worker.retry import RetryPolicy, TransientAdapterError, retry_transient
 from art_sim.worker.worker import SimulationWorker
 
 _EXECUTABLE = frozenset(
@@ -144,10 +149,12 @@ class BrokerSimulationDispatcher:
     def __init__(
         self,
         store: OperationalStore,
-        transport: BrokerTransport,
+        transport: BrokerTransport | None,
         *,
         retry_policy: RetryPolicy | None = None,
     ) -> None:
+        if transport is None:
+            raise BrokerNotConfiguredError("Distributed broker transport is not configured")
         self._store = store
         self._transport = transport
         self._retry_policy = retry_policy or RetryPolicy()
@@ -159,7 +166,14 @@ class BrokerSimulationDispatcher:
         async def publish() -> bool:
             return await self._transport.publish(job, str(job.message_id))
 
-        accepted = await retry_transient(publish, self._retry_policy)
+        try:
+            accepted = await retry_transient(publish, self._retry_policy)
+        except BrokerUnavailableError:
+            raise
+        except TransientAdapterError as error:
+            raise BrokerUnavailableError("Broker publish is unavailable") from error
+        except Exception as error:
+            raise BrokerOperationError("Broker publish failed") from error
         return DispatchReceipt(
             run_id=run_id,
             message_id=job.message_id,
@@ -177,12 +191,34 @@ class BrokerSimulationDispatcher:
                 run.request_id or str(run_id),
             )
 
-        accepted = await retry_transient(publish, self._retry_policy)
+        try:
+            accepted = await retry_transient(publish, self._retry_policy)
+        except BrokerUnavailableError:
+            raise
+        except TransientAdapterError as error:
+            raise BrokerUnavailableError("Broker cancellation publish is unavailable") from error
+        except Exception as error:
+            raise BrokerOperationError("Broker cancellation publish failed") from error
         return CancellationReceipt(
             run_id=run_id,
             accepted=accepted,
             duplicate=not accepted,
         )
+
+    async def health_check(self) -> None:
+        """Fail readiness when the injected broker transport is unavailable."""
+        try:
+            result = await self._transport.health_check()
+        except BrokerUnavailableError:
+            raise
+        except Exception as error:
+            raise BrokerUnavailableError("Broker readiness check failed") from error
+        if not result.ready:
+            raise BrokerUnavailableError("Broker readiness check failed")
+
+    async def close(self) -> None:
+        """Gracefully close the deployment-owned broker transport."""
+        await self._transport.close()
 
 
 async def _job_for_run(store: OperationalStore, run_id: UUID) -> SimulationJobV1:

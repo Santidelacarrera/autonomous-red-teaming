@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -15,6 +15,7 @@ from art_sim.domain.exceptions import ConfigurationError
 from art_sim.platform.checkpoint import sqlite_langgraph_checkpointer
 from art_sim.platform.models import AuditEvent, SimulationRun, SimulationRunStatus
 from art_sim.platform.sqlite import OperationalStoreError, SqliteOperationalStore
+from art_sim.worker.broker import BrokerHealth, BrokerProvider
 from art_sim.worker.dispatcher import BrokerSimulationDispatcher, LocalSimulationDispatcher
 from art_sim.worker.fixtures import shadow_demo_scenario
 from art_sim.worker.jobs import InMemoryDeadLetterSink, SimulationJobV1
@@ -25,6 +26,8 @@ from art_sim.worker.workflow import DurableSimulationWorkflow
 
 
 class _BrokerTransport:
+    provider: ClassVar[BrokerProvider] = BrokerProvider.REDIS_STREAMS
+
     def __init__(self, failures: int = 0) -> None:
         self.failures = failures
         self.calls = 0
@@ -39,6 +42,19 @@ class _BrokerTransport:
         self.seen.add(deduplication_key)
         return True
 
+    async def publish_cancellation(self, run_id: UUID, correlation_id: str) -> bool:
+        key = f"cancel:{run_id}:{correlation_id}"
+        if key in self.seen:
+            return False
+        self.seen.add(key)
+        return True
+
+    async def health_check(self) -> BrokerHealth:
+        return BrokerHealth(provider=self.provider, ready=True)
+
+    async def close(self) -> None:
+        return None
+
 
 class _ControlledWorker:
     def __init__(self) -> None:
@@ -50,14 +66,6 @@ class _ControlledWorker:
         self.started.set()
         await self.release.wait()
         return WorkerRunResult.SUCCEEDED
-
-    async def publish_cancellation(self, run_id: UUID, correlation_id: str) -> bool:
-        key = f"cancel:{run_id}:{correlation_id}"
-        if key in self.seen:
-            return False
-        self.seen.add(key)
-        return True
-
 
 def _run() -> SimulationRun:
     return SimulationRun(

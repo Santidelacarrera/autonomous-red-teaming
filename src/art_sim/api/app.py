@@ -27,6 +27,7 @@ from art_sim.domain.exceptions import (
     AuthenticationError,
     AuthorizationError,
     ConfigurationError,
+    ExternalDependencyError,
     ResultNotAvailableError,
 )
 from art_sim.observability.telemetry import MetricsRegistry
@@ -188,13 +189,32 @@ def create_app(
     @app.exception_handler(TransientAdapterError)
     async def adapter_unavailable(
         request: Request,
-        _: TransientAdapterError,
+        exc: TransientAdapterError,
     ) -> JSONResponse:
+        if isinstance(exc, ExternalDependencyError):
+            return error(
+                request,
+                503,
+                exc.public_code,
+                "A required external service cannot complete the request",
+            )
         return error(
             request,
             503,
             "DEPENDENCY_TEMPORARILY_UNAVAILABLE",
             "A required service is temporarily unavailable",
+        )
+
+    @app.exception_handler(ExternalDependencyError)
+    async def external_dependency_error(
+        request: Request,
+        exc: ExternalDependencyError,
+    ) -> JSONResponse:
+        return error(
+            request,
+            503,
+            exc.public_code,
+            "A required external service cannot complete the request",
         )
 
     @app.exception_handler(HTTPException)

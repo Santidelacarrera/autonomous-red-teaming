@@ -52,15 +52,42 @@ class TelemetryCapability(StrEnum):
     EXTERNAL = "external"
 
 
+class OperationalMetricName(StrEnum):
+    """Bounded metric vocabulary; arbitrary labels and payloads are not accepted."""
+
+    SIMULATIONS_STARTED = "simulations_started_total"
+    SIMULATIONS_SUCCEEDED = "simulations_succeeded_total"
+    SIMULATIONS_FAILED = "simulations_failed_total"
+    SIMULATIONS_CANCELLED = "simulations_cancelled_total"
+    SIMULATIONS_RECOVERED = "simulations_recovered_total"
+    SIMULATION_DURATION = "simulation_duration_seconds"
+    SIMULATION_STAGE_DURATION = "simulation_stage_duration_seconds"
+    LEASE_EXPIRATIONS = "lease_expirations_total"
+    FENCING_REJECTIONS = "fencing_rejections_total"
+    APPROVAL_LATENCY = "approval_latency_seconds"
+    RESULT_PERSISTENCE_FAILURES = "result_persistence_failures_total"
+    BROKER_FAILURES = "broker_failures_total"
+    DATABASE_FAILURES = "database_failures_total"
+    POISON_JOBS = "poison_jobs_total"
+    RETRY_COUNT = "retry_count_total"
+    ACTIVE_WORKERS = "active_workers_total"
+    TELEMETRY_DELIVERY_FAILURES = "telemetry_delivery_failures_total"
+    SIMULATION_APPROVAL = "simulation_approval_total"
+    SIMULATION_REJECTED = "simulation_rejected_total"
+
+
 class MetricEvent(BaseModel):
     """Safe correlated metric event without arbitrary labels or payloads."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    name: str = Field(pattern=r"^simulation_[a-z_]+(?:_total|_seconds)$")
+    name: OperationalMetricName
     value: float = Field(ge=0.0)
     run_id: UUID
     trace_id: UUID
+    request_id: str | None = Field(default=None, max_length=64)
+    worker_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9._:-]{1,128}$")
+    fencing_token: int | None = Field(default=None, ge=1)
     recorded_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -101,3 +128,9 @@ class InMemoryOperationalTelemetrySink:
 
 class ExternalOperationalTelemetrySink(OperationalTelemetrySink, Protocol):
     """Production port for OpenTelemetry, Prometheus, or an equivalent backend."""
+
+    async def health_check(self) -> None:
+        """Verify bounded export availability without emitting sensitive state."""
+
+    async def close(self) -> None:
+        """Flush pending telemetry and release exporter resources."""
