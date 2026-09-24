@@ -13,6 +13,18 @@ class GraphEngineError(Exception):
     """Base class for graph-engine failures."""
 
 
+class ConfigurationError(GraphEngineError):
+    """Raised when a required secure runtime configuration value is absent or invalid."""
+
+
+class AuthenticationError(GraphEngineError):
+    """Raised when caller credentials cannot produce a verified identity."""
+
+
+class AuthorizationError(GraphEngineError):
+    """Raised when an authenticated identity lacks an explicit permission."""
+
+
 class GraphConnectionError(GraphEngineError):
     """Raised when connectivity to Neo4j cannot be established."""
 
@@ -51,3 +63,15 @@ class RemediationEligibilityError(GraphEngineError):
 
 class GitHubIntegrationError(GraphEngineError):
     """Raised when GitHub cannot safely publish a remediation candidate."""
+
+
+class RemediationExportError(GraphEngineError):
+    """Raised when a review-only remediation artifact cannot be rendered safely."""
+
+
+class ApprovalRequiredError(GraphEngineError):
+    """Raised when a remediation workflow attempts to bypass human approval."""
+
+
+class VerificationError(GraphEngineError):
+    """Raised when post-remediation verification cannot analyze the simulated graph."""

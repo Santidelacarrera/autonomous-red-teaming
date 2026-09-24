@@ -23,7 +23,6 @@ from art_sim.infrastructure.config import Neo4jSettings
 from art_sim.infrastructure.cypher_validator import CypherValidator
 from art_sim.infrastructure.neo4j_graph_repository import Neo4jGraphRepository
 
-
 SOURCE_ASSET_ID = uuid5(NAMESPACE_URL, "art-sim:shadow:web-frontend")
 IAM_ROLE_ASSET_ID = uuid5(NAMESPACE_URL, "art-sim:shadow:db-access-role")
 CROWN_JEWEL_ASSET_ID = uuid5(NAMESPACE_URL, "art-sim:shadow:customer-database")
@@ -33,14 +32,14 @@ VULNERABILITY_ID = uuid5(NAMESPACE_URL, "art-sim:shadow:CVE-2023-38606")
 
 def load_neo4j_settings() -> Neo4jSettings:
     """Load required Neo4j connection values without printing secrets."""
-    load_dotenv(override=False)
+    load_dotenv(override=True)  # <-- Fuerza la relectura del archivo .env
     uri = os.getenv("NEO4J_URI")
     password = os.getenv("NEO4J_PASSWORD")
     if not uri or not password:
         raise RuntimeError("NEO4J_URI and NEO4J_PASSWORD must be configured in .env")
     return Neo4jSettings(
         uri=uri,
-        username=os.getenv("NEO4J_USER", "neo4j"),
+        username=os.getenv("NEO4J_USER") or os.getenv("NEO4J_USERNAME") or "neo4j",
         password=SecretStr(password),
     )
 

@@ -23,6 +23,7 @@ from art_sim.domain.models import (
     RelationshipType,
 )
 from art_sim.domain.repositories import GraphRepository
+from art_sim.observability.telemetry import Tracer
 from art_sim.security.sanitizer import PromptInjectionSanitizer, SanitizedTopologyContext
 
 
@@ -118,10 +119,12 @@ def topology() -> tuple[AttackPath, tuple[Asset, ...]]:
 async def test_graph_approves_and_simulates_shadow_plan(topology: tuple[AttackPath, tuple[Asset, ...]]) -> None:
     """The graph reaches mock simulation only after independent approval."""
     path, assets = topology
+    tracer = Tracer()
     graph = AttackSimulationGraph(
         ReconAgent(InMemoryGraphRepository(path, assets), PromptInjectionSanitizer()),
         MitrePathPlanner(),
         SupervisorAgent(),
+        tracer=tracer,
     ).compile()
 
     result = await graph.ainvoke(
@@ -141,6 +144,13 @@ async def test_graph_approves_and_simulates_shadow_plan(topology: tuple[AttackPa
         "supervisor_agent",
         "execution_simulator",
     ]
+    assert [event.node_name for event in tracer.agent_events] == [
+        "recon",
+        "planner",
+        "supervisor",
+        "simulator",
+    ]
+    assert tracer.metrics.snapshot()["agent_executions_successful"] == 4
 
 
 async def test_supervisor_raises_for_non_shadow_plan(topology: tuple[AttackPath, tuple[Asset, ...]]) -> None:

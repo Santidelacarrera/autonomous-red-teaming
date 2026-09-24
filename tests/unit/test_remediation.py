@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from uuid import uuid4
 
 import pytest
+from pydantic import SecretStr
 
 from art_sim.agents.models import (
     AttackPlan,
@@ -146,7 +147,7 @@ async def test_github_service_creates_branch_commit_and_pull_request(
     artifact = await RemediationAgent(PolicyRemediationGenerator()).generate(remediation_request)
     client = FakeGitHubApiClient()
     service = GitHubPRService(
-        GitHubSettings(owner="acme", repository="red-team", token="test-token"), client
+        GitHubSettings(owner="acme", repository="red-team", token=SecretStr("test-token")), client
     )
 
     receipt = await service.publish(artifact, remediation_request)

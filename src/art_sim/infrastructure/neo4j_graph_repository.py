@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Any, Self, TypeVar
+from typing import Any, LiteralString, Self, TypeVar
 from uuid import UUID
 
 from neo4j import AsyncDriver, AsyncGraphDatabase, AsyncManagedTransaction
@@ -15,6 +16,7 @@ from tenacity import (
     wait_exponential_jitter,
 )
 
+from art_sim.blast_radius.calculator import BlastRadiusResult
 from art_sim.domain.exceptions import GraphConnectionError, GraphQueryError, TopologyNotFoundError
 from art_sim.domain.models import (
     Asset,
@@ -87,9 +89,25 @@ class Neo4jGraphRepository(GraphRepository):
         (source)-[:TOPOLOGY_EDGE*1..8]->(target)
     )
     WHERE length(path) <= $max_hops
-    RETURN nodes(path) AS path_nodes, relationships(path) AS path_relationships, length(path) AS hop_count
-    ORDER BY hop_count ASC, [node IN nodes(path) | node.asset_id] ASC
+    WITH path, nodes(path) AS path_nodes, relationships(path) AS path_relationships
+    RETURN path_nodes, path_relationships, length(path) AS hop_count
+    ORDER BY hop_count ASC, [node IN path_nodes | node.asset_id] ASC
     LIMIT 1
+    """
+    _BLAST_RADIUS_QUERY = """
+    MATCH (source:Asset {asset_id: $source_asset_id})
+    OPTIONAL MATCH path = (source)-[:TOPOLOGY_EDGE*1..8]->(reachable:Asset)
+    WHERE length(path) <= $max_hops
+    WITH source, collect(DISTINCT reachable) AS reachable_assets
+    MATCH (asset:Asset)
+    WHERE asset.asset_id <> source.asset_id
+    WITH reachable_assets, collect(asset) AS all_assets
+    RETURN size(reachable_assets) AS reachable_assets,
+           size(all_assets) AS total_assets,
+           size([asset IN reachable_assets WHERE asset.criticality = 'critical']) AS reachable_critical_assets,
+           size([asset IN all_assets WHERE asset.criticality = 'critical']) AS total_critical_assets,
+           size([asset IN reachable_assets WHERE asset.is_crown_jewel = true]) AS reachable_crown_jewels,
+           size([asset IN all_assets WHERE asset.is_crown_jewel = true]) AS total_crown_jewels
     """
 
     def __init__(
@@ -115,11 +133,18 @@ class Neo4jGraphRepository(GraphRepository):
     async def connect(self) -> None:
         """Create and verify an async driver with exponential backoff."""
         if self._driver is None:
+            driver_kwargs: dict[str, Any] = {
+                "auth": (self._settings.username, self._settings.password.get_secret_value()),
+                "max_connection_pool_size": self._settings.max_connection_pool_size,
+            }
+
+            # Si la URI no usa esquemas con SSL implícito (+s / +ssc), incluimos 'encrypted'
+            if not self._settings.uri.startswith(("neo4j+s", "neo4j+ssc", "bolt+s", "bolt+ssc")):
+                driver_kwargs["encrypted"] = self._settings.encrypted
+
             self._driver = AsyncGraphDatabase.driver(
                 self._settings.uri,
-                auth=(self._settings.username, self._settings.password.get_secret_value()),
-                encrypted=self._settings.encrypted,
-                max_connection_pool_size=self._settings.max_connection_pool_size,
+                **driver_kwargs,
             )
         try:
             await self._retry(lambda: self._require_driver().verify_connectivity())
@@ -169,7 +194,7 @@ class Neo4jGraphRepository(GraphRepository):
             "source_asset_id": str(relationship.source_asset_id),
             "target_asset_id": str(relationship.target_asset_id),
             "relationship_type": relationship.relationship_type.value,
-            "properties": relationship.properties,
+            "properties": json.dumps(relationship.properties, sort_keys=True),
             "edge_key": f"{relationship.source_asset_id}:{relationship.relationship_type.value}:{relationship.target_asset_id}",
         }
         await self._execute_write(self._RELATIONSHIP_QUERY, parameters)
@@ -207,7 +232,7 @@ class Neo4jGraphRepository(GraphRepository):
                 source_asset_id=UUID(relationship.start_node["asset_id"]),
                 target_asset_id=UUID(relationship.end_node["asset_id"]),
                 relationship_type=RelationshipType(relationship["relationship_type"]),
-                properties=dict(relationship["properties"]),
+                properties=self._decode_string_map(relationship["properties"], "relationship properties"),
             )
             for relationship in path_relationships
         )
@@ -219,7 +244,54 @@ class Neo4jGraphRepository(GraphRepository):
             hop_count=record["hop_count"],
         )
 
-    async def _execute_write(self, query: str, parameters: Mapping[str, object]) -> None:
+    async def calculate_blast_radius(
+        self, source_asset_id: UUID, *, max_hops: int = 8
+    ) -> BlastRadiusResult:
+        """Aggregate reachability in one bounded, parameterized Neo4j read query."""
+        if not 1 <= max_hops <= 8:
+            raise ValueError("max_hops must be between 1 and 8")
+        record = await self._execute_read_one(
+            self._BLAST_RADIUS_QUERY,
+            {"source_asset_id": str(source_asset_id), "max_hops": max_hops},
+        )
+        if record is None:
+            raise TopologyNotFoundError(f"No source asset exists for blast radius: {source_asset_id}")
+        reachable_assets = record["reachable_assets"]
+        total_assets = record["total_assets"]
+        reachable_critical_assets = record["reachable_critical_assets"]
+        total_critical_assets = record["total_critical_assets"]
+        reachable_crown_jewels = record["reachable_crown_jewels"]
+        total_crown_jewels = record["total_crown_jewels"]
+        if not all(
+            isinstance(value, int)
+            for value in (
+                reachable_assets,
+                total_assets,
+                reachable_critical_assets,
+                total_critical_assets,
+                reachable_crown_jewels,
+                total_crown_jewels,
+            )
+        ):
+            raise GraphQueryError("Neo4j blast-radius query returned invalid aggregate types")
+        return BlastRadiusResult(
+            source_asset_id=source_asset_id,
+            reachable_assets=reachable_assets,
+            total_assets=total_assets,
+            reachable_critical_assets=reachable_critical_assets,
+            total_critical_assets=total_critical_assets,
+            reachable_crown_jewels=reachable_crown_jewels,
+            total_crown_jewels=total_crown_jewels,
+            blast_radius_percentage=self._percentage(reachable_assets, total_assets),
+            critical_blast_radius_percentage=self._percentage(
+                reachable_critical_assets, total_critical_assets
+            ),
+            crown_jewel_exposure_percentage=self._percentage(
+                reachable_crown_jewels, total_crown_jewels
+            ),
+        )
+
+    async def _execute_write(self, query: LiteralString, parameters: Mapping[str, object]) -> None:
         """Validate and execute a write transaction with transient-failure retries."""
         self._validator.validate(query, parameters, CypherIntent.WRITE)
 
@@ -229,7 +301,7 @@ class Neo4jGraphRepository(GraphRepository):
 
         await self._execute(operation)
 
-    async def _execute_read_one(self, query: str, parameters: Mapping[str, object]) -> Any | None:
+    async def _execute_read_one(self, query: LiteralString, parameters: Mapping[str, object]) -> Any | None:
         """Validate and execute a read transaction, returning its first record."""
         self._validator.validate(query, parameters, CypherIntent.READ)
 
@@ -239,7 +311,7 @@ class Neo4jGraphRepository(GraphRepository):
 
         return await self._execute(operation)
 
-    async def _execute_read_all(self, query: str, parameters: Mapping[str, object]) -> list[Any]:
+    async def _execute_read_all(self, query: LiteralString, parameters: Mapping[str, object]) -> list[Any]:
         """Validate and execute a read transaction, returning all bounded records."""
         self._validator.validate(query, parameters, CypherIntent.READ)
 
@@ -250,14 +322,14 @@ class Neo4jGraphRepository(GraphRepository):
         return await self._execute(operation)
 
     @staticmethod
-    async def _run_query(transaction: AsyncManagedTransaction, query: str, parameters: Mapping[str, object]) -> None:
+    async def _run_query(transaction: AsyncManagedTransaction, query: LiteralString, parameters: Mapping[str, object]) -> None:
         """Consume write results so server-side failures are surfaced inside the transaction."""
         result = await transaction.run(query, parameters=dict(parameters))
         await result.consume()
 
     @staticmethod
     async def _run_query_one(
-        transaction: AsyncManagedTransaction, query: str, parameters: Mapping[str, object]
+        transaction: AsyncManagedTransaction, query: LiteralString, parameters: Mapping[str, object]
     ) -> Any | None:
         """Return the first record from a read transaction."""
         result = await transaction.run(query, parameters=dict(parameters))
@@ -265,7 +337,7 @@ class Neo4jGraphRepository(GraphRepository):
 
     @staticmethod
     async def _run_query_all(
-        transaction: AsyncManagedTransaction, query: str, parameters: Mapping[str, object]
+        transaction: AsyncManagedTransaction, query: LiteralString, parameters: Mapping[str, object]
     ) -> list[Any]:
         """Return all records from the intentionally bounded asset lookup."""
         result = await transaction.run(query, parameters=dict(parameters))
@@ -301,7 +373,7 @@ class Neo4jGraphRepository(GraphRepository):
 
     @staticmethod
     def _asset_parameters(asset: Asset) -> dict[str, object]:
-        """Serialize the domain entity without exposing model internals to Neo4j."""
+        """Serialize an asset without exposing model internals to Neo4j."""
         return {
             "asset_id": str(asset.asset_id),
             "name": asset.name,
@@ -311,7 +383,7 @@ class Neo4jGraphRepository(GraphRepository):
             "is_crown_jewel": asset.is_crown_jewel,
             "provider": asset.provider,
             "region": asset.region,
-            "tags": asset.tags,
+            "tags": json.dumps(asset.tags, sort_keys=True),
         }
 
     @staticmethod
@@ -326,5 +398,26 @@ class Neo4jGraphRepository(GraphRepository):
             is_crown_jewel=node["is_crown_jewel"],
             provider=node["provider"],
             region=node["region"],
-            tags=dict(node["tags"]),
+            tags=Neo4jGraphRepository._decode_string_map(node["tags"], "asset tags"),
         )
+
+    @staticmethod
+    def _decode_string_map(value: object, field_name: str) -> dict[str, str]:
+        """Decode the JSON representation required for Neo4j scalar properties."""
+        try:
+            decoded: object = json.loads(value) if isinstance(value, str) else value
+        except (TypeError, ValueError) as error:
+            raise GraphQueryError(f"Neo4j {field_name} are not valid JSON object data") from error
+        if not isinstance(decoded, Mapping):
+            raise GraphQueryError(f"Neo4j {field_name} do not match the expected string map schema")
+        string_map: dict[str, str] = {}
+        for key, item in decoded.items():
+            if not isinstance(key, str) or not isinstance(item, str):
+                raise GraphQueryError(f"Neo4j {field_name} do not match the expected string map schema")
+            string_map[key] = item
+        return string_map
+
+    @staticmethod
+    def _percentage(numerator: int, denominator: int) -> float:
+        """Return a stable percentage while avoiding division by zero."""
+        return round((100.0 * numerator / denominator) if denominator else 0.0, 2)

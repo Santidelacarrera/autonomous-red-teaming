@@ -18,10 +18,13 @@ class AssetType(StrEnum):
     DATABASE = "database"
     SECRET = "secret"
     KUBERNETES_WORKLOAD = "kubernetes_workload"
+    KUBERNETES_NODE = "kubernetes_node"
     KUBERNETES_SERVICE = "kubernetes_service"
     IAM_ROLE = "iam_role"
     NETWORK = "network"
     STORAGE = "storage"
+    SYNTHETIC_CREDENTIAL = "synthetic_credential"
+    INTERNET = "internet"
 
 
 class Environment(StrEnum):
@@ -50,6 +53,10 @@ class RelationshipType(StrEnum):
     ASSUMES_ROLE = "ASSUMES_ROLE"
     EXPOSES = "EXPOSES"
     HOSTS = "HOSTS"
+    CONTAINER_ESCAPE = "CONTAINER_ESCAPE"
+    CREDENTIAL_ACCESS = "CREDENTIAL_ACCESS"
+    IAM_ASSUME_ROLE = "IAM_ASSUME_ROLE"
+    ACCESS = "ACCESS"
 
 
 class Asset(BaseModel):
@@ -99,9 +106,22 @@ class Vulnerability(BaseModel):
     title: str = Field(min_length=1, max_length=256)
     severity: Criticality
     cvss_score: float = Field(ge=0.0, le=10.0)
+    cvss_vector: str | None = Field(
+        default=None,
+        pattern=r"^CVSS:3\.[01]/[A-Z]{1,3}:[A-Z](?:/[A-Z]{1,3}:[A-Z])+$",
+        max_length=128,
+    )
     affected_asset_id: UUID
     evidence_url: HttpUrl | None = None
     is_exploitable: bool = False
+    exploit_available: bool | None = None
+    affected_component: str | None = Field(default=None, max_length=128)
+    fixed_version: str | None = Field(default=None, max_length=64)
+
+    @property
+    def is_exploit_available(self) -> bool:
+        """Expose the newer field while preserving the prior `is_exploitable` contract."""
+        return self.exploit_available if self.exploit_available is not None else self.is_exploitable
 
 
 class AssetRelationship(BaseModel):

@@ -27,7 +27,7 @@ class CypherValidator:
         r"\b(CALL|LOAD\s+CSV|CREATE\s+INDEX|DROP|DELETE|DETACH|FOREACH|USE|SHOW|GRANT|DENY|REVOKE)\b|//|/\*|;",
         re.IGNORECASE,
     )
-    _READ_START = re.compile(r"^\s*(MATCH|OPTIONAL\s+MATCH)\b", re.IGNORECASE)
+    _READ_START = re.compile(r"^\s*(MATCH|OPTIONAL\s+MATCH|UNWIND)\b", re.IGNORECASE)
     _WRITE_START = re.compile(r"^\s*(MERGE|MATCH)\b", re.IGNORECASE)
 
     def validate(self, query: str, parameters: Mapping[str, object], intent: CypherIntent) -> None:
