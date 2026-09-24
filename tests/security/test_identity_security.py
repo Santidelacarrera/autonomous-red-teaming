@@ -230,6 +230,8 @@ class _OidcFixture:
                 issuer=self.issuer,
                 audience=self.audience,
                 jwks_url=f"{self.issuer}/.well-known/jwks.json",
+                mfa_claim="amr",
+                mfa_values=frozenset({"mfa"}),
             ),
             client,
         )

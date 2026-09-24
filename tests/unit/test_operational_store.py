@@ -105,7 +105,10 @@ async def test_transactional_approval_allows_one_worker_and_appends_evidence(tmp
     assert len(failures) == 1
     assert winners[0].approval_status in {ApprovalStatus.APPROVED, ApprovalStatus.REJECTED}
     events = await store.list_events(run.run_id)
-    assert [event.event_type for event in events] == ["simulation.created", f"approval.{winners[0].approval_status.value}"]
+    assert [event.event_type for event in events] == [
+        "simulation.created",
+        f"simulation.{winners[0].approval_status.value}",
+    ]
 
 
 async def test_terminal_run_and_duplicate_run_id_are_rejected(tmp_path: Path) -> None:
@@ -116,6 +119,7 @@ async def test_terminal_run_and_duplicate_run_id_are_rejected(tmp_path: Path) ->
     with pytest.raises(OperationalStoreError, match="already exists"):
         await store.create_run(run)
     rejected = await store.decide(run.run_id, ApprovalDecision.REJECTED, "operator")
-    assert rejected.status is SimulationRunStatus.REJECTED
+    assert rejected.status is SimulationRunStatus.RESUMING
+    await store.update_status(run.run_id, SimulationRunStatus.REJECTED)
     with pytest.raises(OperationalStoreError, match="Terminal"):
         await store.update_status(run.run_id, SimulationRunStatus.RUNNING)

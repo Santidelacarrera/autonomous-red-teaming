@@ -5,8 +5,8 @@ import { SimulationTable } from "../components/SimulationTable";
 
 export function DashboardPage({ page, loading, error, onSelect, onViewAll, onCreate, canCreate }: { readonly page: Page<SimulationRun> | null; readonly loading: boolean; readonly error: unknown; readonly onSelect: (runId: string) => void; readonly onViewAll: () => void; readonly onCreate: () => void; readonly canCreate: boolean }) {
   const runs = page?.items ?? [];
-  const active = runs.filter((run) => run.status === "created" || run.status === "running" || run.status === "waiting_approval").length;
-  const completed = runs.filter((run) => run.status === "completed").length;
+  const active = runs.filter((run) => ["created", "running", "waiting_approval", "resuming"].includes(run.status)).length;
+  const completed = runs.filter((run) => ["succeeded", "completed"].includes(run.status)).length;
   const assessed = runs.filter((run) => run.risk_before !== null).length;
   return <>
     <section className="page-hero"><div><span className="eyebrow">SHADOW ENVIRONMENT · OBSERVABILITY</span><h2>Defensive simulation visibility.</h2><p>Operate within the API-controlled simulation boundary. No infrastructure changes are available from this console.</p></div>{canCreate ? <button className="primary-button" onClick={onCreate}>New simulation <span aria-hidden="true">+</span></button> : null}</section>

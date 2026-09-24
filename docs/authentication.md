@@ -23,15 +23,31 @@ cached with an expiry and refreshed once for an unknown `kid`, supporting safe r
 tokens, and invalid signatures fail with a generic 401 response.
 
 Roles are read from verified `roles` or `role` claims. Permissions are always derived
-from the local matrix. `amr` values such as `mfa`, `otp`, or `hwk` populate the assurance
-context used by optional step-up policy.
+from the local matrix. MFA assurance is never inferred: `ART_OIDC_MFA_CLAIM` names one
+exact, top-level claim in the already signature-verified access token and
+`ART_OIDC_MFA_VALUES` is a comma-separated exact-value allow-list. A string claim or any
+string member of an array claim must match that allow-list. Missing, malformed, or
+unconfigured claims produce `mfa_satisfied=false`.
 
 Required production settings are `ART_AUTH_PROVIDER=oidc`, `ART_OIDC_ISSUER`,
 `ART_OIDC_AUDIENCE`, and `ART_OIDC_JWKS_URL`. OIDC endpoints must use HTTPS. Missing or
 partial configuration fails startup.
+
+When `ART_MFA_REQUIRED_FOR_SENSITIVE_ACTIONS=true`, both MFA settings are mandatory for
+OIDC. Startup fails closed without that trusted contract. An HTTP header, request body,
+browser state, role claim, or unverified JWT content can never raise assurance.
 
 The browser contract accepts an injected `BrowserOidcAdapter` that performs Authorization
 Code with PKCE and provider logout. No implicit flow, client secret, local password store,
 recovery workflow, or home-grown MFA is implemented. The deployment must supply the IdP
 SDK/configuration and the IdP remains responsible for password, recovery, revocation,
 SSO, and MFA policy.
+
+## Delivery status
+
+- **IMPLEMENTED:** strict JWT/JWKS validation, rotation refresh, provider-neutral
+  identity, explicit MFA claim interpretation, and development authentication.
+- **READY WITH EXTERNAL DEPENDENCY:** browser OIDC PKCE adapter and an actual IdP tenant,
+  policy, client registration, logout/revocation, and key lifecycle.
+- **NOT IMPLEMENTED:** local password database, custom MFA enrollment/recovery, and an
+  embedded identity provider.

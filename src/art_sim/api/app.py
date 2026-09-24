@@ -16,12 +16,18 @@ from starlette.middleware.base import RequestResponseEndpoint
 from starlette.middleware.cors import CORSMiddleware
 
 from art_sim.api.security import Authenticator, Principal
-from art_sim.api.services import ApprovalService, SimulationService
+from art_sim.api.services import (
+    ApprovalService,
+    CancellationService,
+    SimulationResultService,
+    SimulationService,
+)
 from art_sim.domain.exceptions import (
     ApprovalRequiredError,
     AuthenticationError,
     AuthorizationError,
     ConfigurationError,
+    ResultNotAvailableError,
 )
 from art_sim.observability.telemetry import MetricsRegistry
 from art_sim.platform.config import RuntimeEnvironment
@@ -30,7 +36,7 @@ from art_sim.platform.models import SimulationRun, SimulationRunStatus
 from art_sim.platform.sqlite import OperationalStoreError
 from art_sim.remediation.models import ApprovalDecision
 from art_sim.security.audit import (
-    InMemorySecurityAuditSink,
+    AuditDurability,
     NullSecurityAuditSink,
     SecurityAuditEvent,
     SecurityAuditSink,
@@ -39,12 +45,14 @@ from art_sim.security.audit import (
 from art_sim.security.config import SecuritySettings
 from art_sim.security.permissions import Permission, authorize
 from art_sim.security.rate_limit import (
-    InMemoryRateLimiter,
     RateLimiter,
+    RateLimiterScope,
     RateLimitPolicy,
     UnlimitedRateLimiter,
 )
 from art_sim.security.sessions import SessionLifecycle, StatelessBearerSession
+from art_sim.worker.models import SimulationArtifacts
+from art_sim.worker.retry import TransientAdapterError
 
 
 class CreateSimulationRequest(BaseModel):
@@ -88,15 +96,23 @@ def create_app(
     security_audit: SecurityAuditSink | None = None,
     security_metrics: MetricsRegistry | None = None,
     session_lifecycle: SessionLifecycle | None = None,
+    result_service: SimulationResultService | None = None,
+    cancellation_service: CancellationService | None = None,
 ) -> FastAPI:
     """Compose the HTTP layer entirely from injected application services."""
     security = security_settings or SecuritySettings()
     if getattr(authenticator, "provider_kind", None) != security.authentication_provider.value:
         raise ConfigurationError("Configured authentication provider does not match its adapter")
     if security.environment is RuntimeEnvironment.PRODUCTION:
-        if rate_limiter is None or isinstance(rate_limiter, InMemoryRateLimiter):
+        if (
+            rate_limiter is None
+            or getattr(rate_limiter, "deployment_scope", None) is not RateLimiterScope.DISTRIBUTED
+        ):
             raise ConfigurationError("Production requires a shared rate limiter")
-        if security_audit is None or isinstance(security_audit, InMemorySecurityAuditSink):
+        if (
+            security_audit is None
+            or getattr(security_audit, "durability", None) is not AuditDurability.DURABLE
+        ):
             raise ConfigurationError("Production requires a durable security audit sink")
     limiter = rate_limiter or UnlimitedRateLimiter()
     audit = security_audit or NullSecurityAuditSink()
@@ -157,6 +173,30 @@ def create_app(
     async def store_error(request: Request, exc: OperationalStoreError) -> JSONResponse:
         return error(request, 404 if "does not exist" in str(exc) else 409, "RUN_NOT_FOUND" if "does not exist" in str(exc) else "RUN_CONFLICT", "Simulation run is unavailable")
 
+    @app.exception_handler(ResultNotAvailableError)
+    async def result_unavailable(
+        request: Request,
+        _: ResultNotAvailableError,
+    ) -> JSONResponse:
+        return error(
+            request,
+            409,
+            "RESULT_NOT_AVAILABLE",
+            "Simulation result is not available",
+        )
+
+    @app.exception_handler(TransientAdapterError)
+    async def adapter_unavailable(
+        request: Request,
+        _: TransientAdapterError,
+    ) -> JSONResponse:
+        return error(
+            request,
+            503,
+            "DEPENDENCY_TEMPORARILY_UNAVAILABLE",
+            "A required service is temporarily unavailable",
+        )
+
     @app.exception_handler(HTTPException)
     async def http_error(request: Request, exc: HTTPException) -> JSONResponse:
         code = (
@@ -185,6 +225,7 @@ def create_app(
         result: str,
         identity: Principal | None = None,
         run_id: UUID | None = None,
+        trace_id: UUID | None = None,
     ) -> None:
         await audit.append(
             SecurityAuditEvent(
@@ -193,6 +234,7 @@ def create_app(
                 issuer=identity.issuer if identity else None,
                 request_id=request.state.request_id,
                 run_id=run_id,
+                trace_id=trace_id,
                 result=result,
             )
         )
@@ -270,7 +312,14 @@ def create_app(
     ) -> dict[str, object]:
         await limit(request, identity.subject, RateLimitPolicy("simulation_create", security.simulation_creates_per_minute))
         try:
-            run, created = await simulation_service.create(body.scenario_id, identity.subject, idempotency_key)
+            run, created = await simulation_service.create(
+                body.scenario_id,
+                identity.subject,
+                idempotency_key,
+                request.state.request_id,
+            )
+            if created:
+                metrics.increment("simulation_created_total")
             await emit(request, SecurityEventType.SIMULATION_CREATED, "succeeded", identity, run.run_id)
             return {**_run_response(run), "created": created}
         except ValueError as exc:
@@ -299,6 +348,48 @@ def create_app(
     ) -> dict[str, object]:
         return _run_response(await simulation_service.get(str(run_id)))
 
+    @app.post("/api/v1/simulations/{run_id}/cancel", tags=["simulations"])
+    async def cancel_simulation(
+        request: Request,
+        run_id: UUID,
+        identity: Principal = Depends(require(Permission.SIMULATION_CANCEL)),  # noqa: B008
+    ) -> dict[str, object]:
+        if cancellation_service is None:
+            raise HTTPException(status_code=409, detail="Cancellation is not configured")
+        await limit(
+            request,
+            identity.subject,
+            RateLimitPolicy("simulation_cancel", security.simulation_creates_per_minute),
+        )
+        cancelled = await cancellation_service.cancel(run_id, identity.subject)
+        await emit(
+            request,
+            SecurityEventType.SIMULATION_CANCELLED,
+            "succeeded",
+            identity,
+            run_id,
+            cancelled.trace_id,
+        )
+        return _run_response(cancelled)
+
+    @app.get("/api/v1/simulations/{run_id}/events", tags=["audit"])
+    async def simulation_events(
+        run_id: UUID,
+        _: Principal = Depends(require(Permission.AUDIT_READ)),  # noqa: B008
+    ) -> dict[str, object]:
+        events = await simulation_service.events(run_id)
+        return {
+            "items": [
+                {
+                    "event_id": str(event.event_id),
+                    "timestamp": event.timestamp.isoformat(),
+                    "event_type": event.event_type,
+                    "status": event.status,
+                }
+                for event in events
+            ]
+        }
+
     @app.post("/api/v1/simulations/{run_id}/approval", tags=["approval"])
     async def approve(
         request: Request,
@@ -316,7 +407,8 @@ def create_app(
             raise HTTPException(status_code=403, detail="Authorization is insufficient") from exc
         if security.mfa_required_for_sensitive_actions and not identity.authentication.mfa_satisfied:
             metrics.increment("approval_denied_total")
-            await emit(request, SecurityEventType.AUTHORIZATION_DENIED, "denied", identity, run_id)
+            metrics.increment("mfa_failure_total")
+            await emit(request, SecurityEventType.MFA_FAILURE, "denied", identity, run_id)
             raise HTTPException(status_code=403, detail="Step-up authentication is required")
         await limit(request, identity.subject, RateLimitPolicy("approval", security.approval_requests_per_minute))
         try:
@@ -332,35 +424,52 @@ def create_app(
         run_id: UUID,
         _: Principal = Depends(require(Permission.RISK_READ)),  # noqa: B008
     ) -> dict[str, object]:
-        run = await simulation_service.get(str(run_id))
-        return {"risk_before": run.risk_before, "risk_after": run.risk_after, "risk_delta": None if run.risk_before is None or run.risk_after is None else run.risk_before - run.risk_after}
+        result = await load_result(run_id)
+        return {
+            "risk_before": result.risk.score,
+            "risk_after": result.verification.risk_after,
+            "risk_delta": result.verification.risk_reduction,
+            "breakdown": result.risk.breakdown.model_dump(mode="json"),
+        }
 
-    async def results_unavailable(run_id: UUID) -> None:
-        """Ensure the run exists, then avoid inventing analysis that has not been persisted."""
-        await simulation_service.get(str(run_id))
-        raise HTTPException(status_code=409, detail="Simulation results are not yet persisted")
+    async def load_result(run_id: UUID) -> SimulationArtifacts:
+        """Load immutable worker output; legacy compositions remain explicitly unavailable."""
+        if result_service is None:
+            await simulation_service.get(str(run_id))
+            raise ResultNotAvailableError("Simulation result persistence is not configured")
+        return await result_service.get(run_id)
 
     @app.get("/api/v1/simulations/{run_id}/attack-paths", tags=["analysis"])
-    async def attack_paths(run_id: UUID, _: Principal = Depends(require(Permission.ATTACK_PATH_READ))) -> None:  # noqa: B008
-        await results_unavailable(run_id)
+    async def attack_paths(run_id: UUID, _: Principal = Depends(require(Permission.ATTACK_PATH_READ))) -> dict[str, object]:  # noqa: B008
+        result = await load_result(run_id)
+        return {"items": [path.model_dump(mode="json") for path in result.attack_paths]}
 
     @app.get("/api/v1/simulations/{run_id}/blast-radius", tags=["analysis"])
-    async def blast_radius(run_id: UUID, _: Principal = Depends(require(Permission.BLAST_RADIUS_READ))) -> None:  # noqa: B008
-        await results_unavailable(run_id)
+    async def blast_radius(run_id: UUID, _: Principal = Depends(require(Permission.BLAST_RADIUS_READ))) -> dict[str, object]:  # noqa: B008
+        result = await load_result(run_id)
+        return result.blast_radius.model_dump(mode="json")
 
     @app.get("/api/v1/simulations/{run_id}/remediations", tags=["remediation"])
-    async def remediations(run_id: UUID, _: Principal = Depends(require(Permission.REMEDIATION_READ))) -> None:  # noqa: B008
-        await results_unavailable(run_id)
+    async def remediations(run_id: UUID, _: Principal = Depends(require(Permission.REMEDIATION_READ))) -> dict[str, object]:  # noqa: B008
+        result = await load_result(run_id)
+        return {
+            "items": [item.model_dump(mode="json") for item in result.remediations],
+            "artifacts": [
+                item.model_dump(mode="json") for item in result.remediation_artifacts
+            ],
+        }
 
     @app.get("/api/v1/simulations/{run_id}/verification", tags=["verification"])
-    async def verification(run_id: UUID, _: Principal = Depends(require(Permission.VERIFICATION_READ))) -> None:  # noqa: B008
-        await results_unavailable(run_id)
+    async def verification(run_id: UUID, _: Principal = Depends(require(Permission.VERIFICATION_READ))) -> dict[str, object]:  # noqa: B008
+        result = await load_result(run_id)
+        return result.verification.model_dump(mode="json")
 
     @app.get("/api/v1/simulations/{run_id}/report", tags=["reports"])
-    async def report(run_id: UUID, format: str = "markdown", _: Principal = Depends(require(Permission.REPORT_READ))) -> None:  # noqa: B008
+    async def report(run_id: UUID, format: str = "markdown", _: Principal = Depends(require(Permission.REPORT_READ))) -> dict[str, str]:  # noqa: B008
         if format != "markdown":
             raise HTTPException(status_code=422, detail="Only markdown reports are supported")
-        await results_unavailable(run_id)
+        result = await load_result(run_id)
+        return {"format": "markdown", "content": result.report_markdown}
 
     @app.get("/api/v1/security/status", tags=["security"])
     async def security_status(

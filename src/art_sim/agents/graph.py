@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
@@ -36,7 +37,10 @@ class AttackSimulationGraph:
         self._simulator = simulator or MockExecutionSimulator()
         self._tracer = tracer
 
-    def compile(self) -> CompiledStateGraph[AgentState, None, AgentState, AgentState]:
+    def compile(
+        self,
+        checkpointer: BaseCheckpointSaver[Any] | None = None,
+    ) -> CompiledStateGraph[AgentState, None, AgentState, AgentState]:
         """Compile conditional routing: reject/replan, approve/simulate, or stop safely."""
         builder = StateGraph(AgentState)
         builder.add_node("recon", self._recon_node)
@@ -52,7 +56,7 @@ class AttackSimulationGraph:
             {"planner": "planner", "simulator": "simulator", "end": END},
         )
         builder.add_edge("simulator", END)
-        return builder.compile()
+        return builder.compile(checkpointer=checkpointer)
 
     async def _recon_node(self, state: AgentState) -> dict[str, object]:
         """Get the bounded candidate path and sanitized planner context."""

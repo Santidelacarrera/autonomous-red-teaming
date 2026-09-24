@@ -6,18 +6,24 @@ import asyncio
 import hashlib
 import hmac
 import sqlite3
-from datetime import UTC, datetime
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import ClassVar
 from uuid import UUID
 
 from art_sim.domain.exceptions import ApprovalRequiredError, ConfigurationError, GraphEngineError
+from art_sim.platform.lifecycle import SimulationRunStateMachine
 from art_sim.platform.models import (
     AuditEvent,
+    ExecutionClaim,
     SimulationRun,
     SimulationRunStatus,
     WorkflowCheckpoint,
 )
+from art_sim.platform.ports import OperationalStoreCapability
 from art_sim.remediation.models import ApprovalDecision, ApprovalStatus
+from art_sim.worker.models import SimulationArtifacts
 
 
 class CheckpointCorruptionError(GraphEngineError):
@@ -36,13 +42,22 @@ class SqliteOperationalStore:
     deployment requires a server database adapter implementing the same ports.
     """
 
-    _SCHEMA_VERSION = 1
+    _SCHEMA_VERSION = 2
+    deployment_capability: ClassVar[OperationalStoreCapability] = (
+        OperationalStoreCapability.SINGLE_NODE
+    )
 
-    def __init__(self, database_path: Path) -> None:
+    def __init__(
+        self,
+        database_path: Path,
+        *,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
         """Validate the explicit database target; it is never inferred from a secret."""
         if database_path.suffix.lower() not in {".db", ".sqlite", ".sqlite3"}:
             raise ConfigurationError("Operational SQLite database must use a database file extension")
         self._path = database_path
+        self._clock = clock or (lambda: datetime.now(UTC))
 
     async def initialize(self) -> None:
         """Create versioned schema idempotently before accepting any work."""
@@ -86,6 +101,20 @@ class SqliteOperationalStore:
         """Append an event only; existing events are never updated or deleted."""
         await asyncio.to_thread(self._append_event_sync, event)
 
+    async def append_worker_event(
+        self,
+        event: AuditEvent,
+        owner_id: str,
+        fencing_token: int,
+    ) -> None:
+        """Append worker evidence only while the exact fenced lease remains live."""
+        await asyncio.to_thread(
+            self._append_worker_event_sync,
+            event,
+            owner_id,
+            fencing_token,
+        )
+
     async def list_events(self, run_id: UUID) -> tuple[AuditEvent, ...]:
         """Return audit events in append sequence order."""
         return await asyncio.to_thread(self._list_events_sync, run_id)
@@ -95,6 +124,148 @@ class SqliteOperationalStore:
         if not actor.strip():
             raise ApprovalRequiredError("Approval actor is required")
         return await asyncio.to_thread(self._decide_sync, run_id, decision, actor)
+
+    async def acquire_execution(
+        self,
+        run_id: UUID,
+        owner_id: str,
+        trace_id: UUID,
+        *,
+        lease_seconds: int = 300,
+        expected_attempt: int | None = None,
+    ) -> ExecutionClaim | None:
+        """Atomically acquire one run across workers and transition it into execution."""
+        if not owner_id or len(owner_id) > 128 or lease_seconds < 1:
+            raise ValueError("Worker ownership parameters are invalid")
+        return await asyncio.to_thread(
+            self._acquire_execution_sync,
+            run_id,
+            owner_id,
+            trace_id,
+            lease_seconds,
+            expected_attempt,
+        )
+
+    async def next_execution_attempt(self, run_id: UUID) -> int:
+        """Return the next fencing generation without mutating ownership."""
+        return await asyncio.to_thread(self._next_execution_attempt_sync, run_id)
+
+    async def renew_execution(
+        self,
+        run_id: UUID,
+        owner_id: str,
+        fencing_token: int,
+        *,
+        lease_seconds: int = 300,
+    ) -> bool:
+        """Extend only a live lease owned by the exact fencing generation."""
+        return await asyncio.to_thread(
+            self._renew_execution_sync,
+            run_id,
+            owner_id,
+            fencing_token,
+            lease_seconds,
+        )
+
+    async def release_execution(
+        self,
+        run_id: UUID,
+        owner_id: str,
+        fencing_token: int,
+    ) -> None:
+        """Expire a live lease so another worker can recover it safely."""
+        await asyncio.to_thread(
+            self._release_execution_sync,
+            run_id,
+            owner_id,
+            fencing_token,
+        )
+
+    async def mark_waiting_approval(
+        self,
+        run_id: UUID,
+        owner_id: str,
+        fencing_token: int,
+    ) -> SimulationRun:
+        """Persist the HITL boundary and relinquish execution ownership atomically."""
+        return await asyncio.to_thread(
+            self._mark_waiting_approval_sync,
+            run_id,
+            owner_id,
+            fencing_token,
+        )
+
+    async def complete_execution(
+        self,
+        artifacts: SimulationArtifacts,
+        owner_id: str,
+        fencing_token: int,
+    ) -> SimulationRun:
+        """Commit immutable results and terminal success in one transaction."""
+        return await asyncio.to_thread(
+            self._complete_execution_sync,
+            artifacts,
+            owner_id,
+            fencing_token,
+        )
+
+    async def reject_execution(
+        self,
+        run_id: UUID,
+        owner_id: str,
+        fencing_token: int,
+    ) -> SimulationRun:
+        """Finalize an HMAC-processed rejection without producing result artifacts."""
+        return await asyncio.to_thread(
+            self._finish_without_result_sync,
+            run_id,
+            owner_id,
+            fencing_token,
+            True,
+        )
+
+    async def fail_execution(
+        self,
+        run_id: UUID,
+        owner_id: str,
+        fencing_token: int,
+        error_code: str,
+    ) -> SimulationRun:
+        """Persist only a bounded safe error code and release worker ownership."""
+        if not error_code or len(error_code) > 64 or not error_code.replace("_", "").isalnum():
+            raise ValueError("Worker error code is invalid")
+        return await asyncio.to_thread(
+            self._finish_without_result_sync,
+            run_id,
+            owner_id,
+            fencing_token,
+            False,
+            error_code,
+        )
+
+    async def request_cancellation(self, run_id: UUID, actor: str) -> SimulationRun:
+        """Atomically request cooperative cancellation or cancel an idle active run."""
+        if not actor.strip() or len(actor) > 128:
+            raise ValueError("Cancellation actor is invalid")
+        return await asyncio.to_thread(self._request_cancellation_sync, run_id, actor)
+
+    async def cancel_execution(
+        self,
+        run_id: UUID,
+        owner_id: str,
+        fencing_token: int,
+    ) -> SimulationRun:
+        """Finalize cancellation from the currently fenced worker only."""
+        return await asyncio.to_thread(
+            self._cancel_execution_sync,
+            run_id,
+            owner_id,
+            fencing_token,
+        )
+
+    async def get_result(self, run_id: UUID) -> SimulationArtifacts:
+        """Load one immutable final artifact bundle by run identifier."""
+        return await asyncio.to_thread(self._get_result_sync, run_id)
 
     def _connection(self) -> sqlite3.Connection:
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -127,8 +298,30 @@ class SqliteOperationalStore:
                   idempotency_key TEXT PRIMARY KEY, run_id TEXT NOT NULL, scenario_id TEXT NOT NULL,
                   FOREIGN KEY(run_id) REFERENCES simulation_runs(run_id)
                 );
+                CREATE TABLE IF NOT EXISTS worker_leases (
+                  run_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, attempt INTEGER NOT NULL,
+                  fencing_token INTEGER NOT NULL, acquired_at TEXT NOT NULL,
+                  lease_expires_at TEXT NOT NULL,
+                  FOREIGN KEY(run_id) REFERENCES simulation_runs(run_id)
+                );
+                CREATE TABLE IF NOT EXISTS simulation_results (
+                  run_id TEXT PRIMARY KEY, workflow_version TEXT NOT NULL,
+                  payload TEXT NOT NULL, created_at TEXT NOT NULL,
+                  FOREIGN KEY(run_id) REFERENCES simulation_runs(run_id)
+                );
                 """
             )
+            lease_columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(worker_leases)").fetchall()
+            }
+            if "fencing_token" not in lease_columns:
+                connection.execute(
+                    "ALTER TABLE worker_leases ADD COLUMN fencing_token INTEGER NOT NULL DEFAULT 0"
+                )
+                connection.execute(
+                    "UPDATE worker_leases SET fencing_token=attempt WHERE fencing_token=0"
+                )
             connection.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (self._SCHEMA_VERSION,))
 
     def _save_checkpoint_sync(self, checkpoint: WorkflowCheckpoint) -> None:
@@ -218,8 +411,9 @@ class SqliteOperationalStore:
 
     def _update_status_sync(self, run_id: UUID, status: SimulationRunStatus) -> SimulationRun:
         run = self._get_run_sync(run_id)
-        if run.status in {SimulationRunStatus.COMPLETED, SimulationRunStatus.FAILED, SimulationRunStatus.REJECTED}:
+        if run.status in SimulationRunStateMachine.TERMINAL:
             raise OperationalStoreError("Terminal simulation runs cannot be updated")
+        SimulationRunStateMachine.require(run.status, status)
         updated = run.model_copy(update={"status": status, "updated_at": datetime.now(UTC)})
         with self._connection() as connection:
             connection.execute("UPDATE simulation_runs SET payload=?,status=?,updated_at=? WHERE run_id=?", (self._dump(updated), status.value, updated.updated_at.isoformat(), str(run_id)))
@@ -228,6 +422,18 @@ class SqliteOperationalStore:
     def _append_event_sync(self, event: AuditEvent) -> None:
         with self._connection() as connection:
             self._append_event(connection, event)
+
+    def _append_worker_event_sync(
+        self,
+        event: AuditEvent,
+        owner_id: str,
+        fencing_token: int,
+    ) -> None:
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._owned_run(connection, event.run_id, owner_id, fencing_token)
+            self._append_event(connection, event)
+            connection.commit()
 
     def _list_events_sync(self, run_id: UUID) -> tuple[AuditEvent, ...]:
         with self._connection() as connection:
@@ -246,20 +452,537 @@ class SqliteOperationalStore:
                 raise ApprovalRequiredError("Only a pending waiting run can receive a decision")
             run = SimulationRun.model_validate_json(str(row["payload"]))
             approval_status = ApprovalStatus.APPROVED if decision is ApprovalDecision.APPROVED else ApprovalStatus.REJECTED
-            status = SimulationRunStatus.RUNNING if approval_status is ApprovalStatus.APPROVED else SimulationRunStatus.REJECTED
+            status = SimulationRunStatus.RESUMING
+            SimulationRunStateMachine.require(run.status, status)
             now = datetime.now(UTC)
-            updated = run.model_copy(update={"approval_status": approval_status, "approval_timestamp": now, "status": status, "updated_at": now})
+            updated = run.model_copy(
+                update={
+                    "approval_status": approval_status,
+                    "approval_timestamp": now,
+                    "approval_actor": actor,
+                    "status": status,
+                    "updated_at": now,
+                }
+            )
             connection.execute("UPDATE simulation_runs SET payload=?,status=?,approval_status=?,updated_at=? WHERE run_id=?", (self._dump(updated), status.value, approval_status.value, now.isoformat(), str(run_id)))
-            self._append_event(connection, AuditEvent(run_id=run_id, event_type=f"approval.{decision.value}", actor=actor, status="succeeded" if decision is ApprovalDecision.APPROVED else "rejected"))
+            self._append_event(
+                connection,
+                AuditEvent(
+                    run_id=run_id,
+                    event_type=f"simulation.{decision.value}",
+                    actor=actor,
+                    status=(
+                        "succeeded"
+                        if decision is ApprovalDecision.APPROVED
+                        else "rejected"
+                    ),
+                ),
+            )
             connection.commit()
             return updated
+
+    def _acquire_execution_sync(
+        self,
+        run_id: UUID,
+        owner_id: str,
+        trace_id: UUID,
+        lease_seconds: int,
+        expected_attempt: int | None,
+    ) -> ExecutionClaim | None:
+        now = self._clock()
+        if now.tzinfo is None:
+            raise ConfigurationError("Operational store clock must be timezone-aware")
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT payload FROM simulation_runs WHERE run_id=?",
+                (str(run_id),),
+            ).fetchone()
+            if row is None:
+                connection.rollback()
+                raise OperationalStoreError("Simulation run does not exist")
+            run = SimulationRun.model_validate_json(str(row["payload"]))
+            if run.status not in {
+                SimulationRunStatus.CREATED,
+                SimulationRunStatus.RUNNING,
+                SimulationRunStatus.RESUMING,
+            }:
+                connection.rollback()
+                return None
+            lease = connection.execute(
+                """SELECT attempt,fencing_token,lease_expires_at
+                   FROM worker_leases WHERE run_id=?""",
+                (str(run_id),),
+            ).fetchone()
+            if lease is not None and datetime.fromisoformat(str(lease["lease_expires_at"])) > now:
+                connection.rollback()
+                return None
+            attempt = int(lease["attempt"]) + 1 if lease is not None else 1
+            if expected_attempt is not None and expected_attempt != attempt:
+                connection.rollback()
+                return None
+            fencing_token = int(lease["fencing_token"]) + 1 if lease is not None else 1
+            original_status = run.status
+            if run.status is not SimulationRunStatus.RUNNING:
+                SimulationRunStateMachine.require(run.status, SimulationRunStatus.RUNNING)
+            updated = run.model_copy(
+                update={
+                    "status": SimulationRunStatus.RUNNING,
+                    "trace_id": trace_id,
+                    "updated_at": now,
+                }
+            )
+            expires_at = now + timedelta(seconds=lease_seconds)
+            connection.execute(
+                """INSERT INTO worker_leases(
+                     run_id,owner_id,attempt,fencing_token,acquired_at,lease_expires_at
+                   ) VALUES(?,?,?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET
+                   owner_id=excluded.owner_id,attempt=excluded.attempt,
+                   fencing_token=excluded.fencing_token,
+                   acquired_at=excluded.acquired_at,lease_expires_at=excluded.lease_expires_at""",
+                (
+                    str(run_id),
+                    owner_id,
+                    attempt,
+                    fencing_token,
+                    now.isoformat(),
+                    expires_at.isoformat(),
+                ),
+            )
+            self._write_run(connection, updated)
+            self._append_event(
+                connection,
+                AuditEvent(
+                    run_id=run_id,
+                    event_type=(
+                        "simulation.started"
+                        if original_status is SimulationRunStatus.CREATED
+                        else "simulation.resumed"
+                    ),
+                    actor=f"worker:{owner_id}",
+                    status="succeeded",
+                    metadata={
+                        "trace_id": str(trace_id),
+                        "attempt": str(attempt),
+                        "fencing_token": str(fencing_token),
+                    },
+                ),
+            )
+            connection.commit()
+            return ExecutionClaim(
+                run=updated,
+                owner_id=owner_id,
+                attempt=attempt,
+                fencing_token=fencing_token,
+                lease_expires_at=expires_at,
+            )
+
+    def _next_execution_attempt_sync(self, run_id: UUID) -> int:
+        with self._connection() as connection:
+            run_row = connection.execute(
+                "SELECT status FROM simulation_runs WHERE run_id=?",
+                (str(run_id),),
+            ).fetchone()
+            if run_row is None:
+                raise OperationalStoreError("Simulation run does not exist")
+            if SimulationRunStatus(str(run_row["status"])) not in {
+                SimulationRunStatus.CREATED,
+                SimulationRunStatus.RUNNING,
+                SimulationRunStatus.RESUMING,
+            }:
+                raise OperationalStoreError("Simulation run is not executable")
+            lease = connection.execute(
+                "SELECT attempt FROM worker_leases WHERE run_id=?",
+                (str(run_id),),
+            ).fetchone()
+        return int(lease["attempt"]) + 1 if lease is not None else 1
+
+    def _renew_execution_sync(
+        self,
+        run_id: UUID,
+        owner_id: str,
+        fencing_token: int,
+        lease_seconds: int,
+    ) -> bool:
+        if lease_seconds < 1:
+            raise ValueError("Lease duration must be positive")
+        now = self._aware_now()
+        expires_at = now + timedelta(seconds=lease_seconds)
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                """UPDATE worker_leases SET lease_expires_at=?
+                   WHERE run_id=? AND owner_id=? AND fencing_token=?
+                   AND lease_expires_at>?""",
+                (
+                    expires_at.isoformat(),
+                    str(run_id),
+                    owner_id,
+                    fencing_token,
+                    now.isoformat(),
+                ),
+            )
+            connection.commit()
+            return cursor.rowcount == 1
+
+    def _release_execution_sync(
+        self,
+        run_id: UUID,
+        owner_id: str,
+        fencing_token: int,
+    ) -> None:
+        now = self._aware_now()
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._owned_run(connection, run_id, owner_id, fencing_token)
+            connection.execute(
+                """UPDATE worker_leases SET lease_expires_at=?
+                   WHERE run_id=? AND owner_id=? AND fencing_token=?""",
+                (now.isoformat(), str(run_id), owner_id, fencing_token),
+            )
+            self._append_event(
+                connection,
+                AuditEvent(
+                    run_id=run_id,
+                    event_type="simulation.lease_released",
+                    actor=f"worker:{owner_id}",
+                    status="pending",
+                    metadata={"fencing_token": str(fencing_token)},
+                ),
+            )
+            connection.commit()
+
+    def _mark_waiting_approval_sync(
+        self,
+        run_id: UUID,
+        owner_id: str,
+        fencing_token: int,
+    ) -> SimulationRun:
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            run = self._owned_run(connection, run_id, owner_id, fencing_token)
+            now = self._aware_now()
+            target = (
+                SimulationRunStatus.CANCELLED
+                if run.cancellation_requested
+                else SimulationRunStatus.WAITING_APPROVAL
+            )
+            SimulationRunStateMachine.require(run.status, target)
+            updated = run.model_copy(
+                update={
+                    "status": target,
+                    "updated_at": now,
+                }
+            )
+            self._write_run(connection, updated)
+            connection.execute(
+                "UPDATE worker_leases SET lease_expires_at=? WHERE run_id=?",
+                (now.isoformat(), str(run_id)),
+            )
+            self._append_event(
+                connection,
+                AuditEvent(
+                    run_id=run_id,
+                    event_type=(
+                        "simulation.cancelled"
+                        if target is SimulationRunStatus.CANCELLED
+                        else "simulation.waiting_approval"
+                    ),
+                    actor=f"worker:{owner_id}",
+                    status=(
+                        "cancelled"
+                        if target is SimulationRunStatus.CANCELLED
+                        else "pending"
+                    ),
+                ),
+            )
+            connection.commit()
+            return updated
+
+    def _complete_execution_sync(
+        self,
+        artifacts: SimulationArtifacts,
+        owner_id: str,
+        fencing_token: int,
+    ) -> SimulationRun:
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            run = self._owned_run(
+                connection,
+                artifacts.run_id,
+                owner_id,
+                fencing_token,
+            )
+            SimulationRunStateMachine.require(run.status, SimulationRunStatus.SUCCEEDED)
+            if run.cancellation_requested:
+                connection.rollback()
+                raise OperationalStoreError("Cancellation prevents result publication")
+            if run.workflow_version != artifacts.workflow_version or run.scenario_id != artifacts.scenario_id:
+                connection.rollback()
+                raise OperationalStoreError("Result artifact does not match its simulation run")
+            connection.execute(
+                "INSERT INTO simulation_results(run_id,workflow_version,payload,created_at) VALUES(?,?,?,?)",
+                (
+                    str(artifacts.run_id),
+                    artifacts.workflow_version,
+                    artifacts.model_dump_json(),
+                    artifacts.generated_at.isoformat(),
+                ),
+            )
+            updated = run.model_copy(
+                update={
+                    "status": SimulationRunStatus.SUCCEEDED,
+                    "graph_version": artifacts.graph_version,
+                    "risk_before": artifacts.risk.score,
+                    "risk_after": artifacts.verification.risk_after,
+                    "blast_radius_before": artifacts.blast_radius.blast_radius_percentage,
+                    "blast_radius_after": (
+                        artifacts.verification.blast_radius_after.blast_radius_percentage
+                    ),
+                    "verification_status": artifacts.verification.status,
+                    "artifacts": tuple(
+                        artifact.file_path for artifact in artifacts.remediation_artifacts
+                    )
+                    + ("report.md",),
+                    "updated_at": self._aware_now(),
+                }
+            )
+            self._write_run(connection, updated)
+            connection.execute(
+                "UPDATE worker_leases SET lease_expires_at=? WHERE run_id=?",
+                (updated.updated_at.isoformat(), str(artifacts.run_id)),
+            )
+            self._append_event(
+                connection,
+                AuditEvent(
+                    run_id=artifacts.run_id,
+                    event_type="simulation.completed",
+                    actor=f"worker:{owner_id}",
+                    status="succeeded",
+                    metadata={"trace_id": str(artifacts.trace_id)},
+                ),
+            )
+            connection.commit()
+            return updated
+
+    def _finish_without_result_sync(
+        self,
+        run_id: UUID,
+        owner_id: str,
+        fencing_token: int,
+        rejected: bool,
+        error_code: str = "SIMULATION_REJECTED",
+    ) -> SimulationRun:
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            run = self._owned_run(connection, run_id, owner_id, fencing_token)
+            target = (
+                SimulationRunStatus.CANCELLED
+                if run.cancellation_requested
+                else SimulationRunStatus.REJECTED
+                if rejected
+                else SimulationRunStatus.FAILED
+            )
+            SimulationRunStateMachine.require(run.status, target)
+            now = self._aware_now()
+            updated = run.model_copy(
+                update={
+                    "status": target,
+                    "error_code": (
+                        None
+                        if rejected or target is SimulationRunStatus.CANCELLED
+                        else error_code
+                    ),
+                    "updated_at": now,
+                }
+            )
+            self._write_run(connection, updated)
+            connection.execute(
+                "UPDATE worker_leases SET lease_expires_at=? WHERE run_id=?",
+                (now.isoformat(), str(run_id)),
+            )
+            self._append_event(
+                connection,
+                AuditEvent(
+                    run_id=run_id,
+                    event_type=(
+                        "simulation.cancelled"
+                        if target is SimulationRunStatus.CANCELLED
+                        else "simulation.rejected"
+                        if rejected
+                        else "simulation.poisoned"
+                        if error_code == "MAX_ATTEMPTS_EXCEEDED"
+                        else "simulation.failed"
+                    ),
+                    actor=f"worker:{owner_id}",
+                    status=(
+                        "cancelled"
+                        if target is SimulationRunStatus.CANCELLED
+                        else "rejected"
+                        if rejected
+                        else "failed"
+                    ),
+                    metadata=(
+                        {}
+                        if rejected or target is SimulationRunStatus.CANCELLED
+                        else {"error_code": error_code}
+                    ),
+                ),
+            )
+            connection.commit()
+            return updated
+
+    def _request_cancellation_sync(self, run_id: UUID, actor: str) -> SimulationRun:
+        now = self._aware_now()
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT payload FROM simulation_runs WHERE run_id=?",
+                (str(run_id),),
+            ).fetchone()
+            if row is None:
+                connection.rollback()
+                raise OperationalStoreError("Simulation run does not exist")
+            run = SimulationRun.model_validate_json(str(row["payload"]))
+            if run.status is SimulationRunStatus.CANCELLED:
+                connection.commit()
+                return run
+            if run.status in SimulationRunStateMachine.TERMINAL:
+                connection.rollback()
+                raise OperationalStoreError("Terminal simulation run cannot be cancelled")
+            status: SimulationRunStatus = run.status
+            if status in {
+                SimulationRunStatus.CREATED,
+                SimulationRunStatus.WAITING_APPROVAL,
+            }:
+                SimulationRunStateMachine.require(status, SimulationRunStatus.CANCELLED)
+                status = SimulationRunStatus.CANCELLED
+            updated = run.model_copy(
+                update={
+                    "status": status,
+                    "cancellation_requested": True,
+                    "cancellation_requested_at": now,
+                    "cancellation_actor": actor,
+                    "updated_at": now,
+                }
+            )
+            self._write_run(connection, updated)
+            self._append_event(
+                connection,
+                AuditEvent(
+                    run_id=run_id,
+                    event_type=(
+                        "simulation.cancelled"
+                        if status is SimulationRunStatus.CANCELLED
+                        else "simulation.cancel_requested"
+                    ),
+                    actor=actor,
+                    status=(
+                        "cancelled"
+                        if status is SimulationRunStatus.CANCELLED
+                        else "pending"
+                    ),
+                ),
+            )
+            connection.commit()
+            return updated
+
+    def _cancel_execution_sync(
+        self,
+        run_id: UUID,
+        owner_id: str,
+        fencing_token: int,
+    ) -> SimulationRun:
+        now = self._aware_now()
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            run = self._owned_run(connection, run_id, owner_id, fencing_token)
+            if not run.cancellation_requested:
+                connection.rollback()
+                raise OperationalStoreError("Simulation cancellation was not requested")
+            SimulationRunStateMachine.require(run.status, SimulationRunStatus.CANCELLED)
+            updated = run.model_copy(
+                update={"status": SimulationRunStatus.CANCELLED, "updated_at": now}
+            )
+            self._write_run(connection, updated)
+            connection.execute(
+                "UPDATE worker_leases SET lease_expires_at=? WHERE run_id=?",
+                (now.isoformat(), str(run_id)),
+            )
+            self._append_event(
+                connection,
+                AuditEvent(
+                    run_id=run_id,
+                    event_type="simulation.cancelled",
+                    actor=f"worker:{owner_id}",
+                    status="cancelled",
+                    metadata={"fencing_token": str(fencing_token)},
+                ),
+            )
+            connection.commit()
+            return updated
+
+    def _get_result_sync(self, run_id: UUID) -> SimulationArtifacts:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT payload FROM simulation_results WHERE run_id=?",
+                (str(run_id),),
+            ).fetchone()
+        if row is None:
+            raise OperationalStoreError("Simulation result does not exist")
+        return SimulationArtifacts.model_validate_json(str(row["payload"]))
+
+    def _owned_run(
+        self,
+        connection: sqlite3.Connection,
+        run_id: UUID,
+        owner_id: str,
+        fencing_token: int,
+    ) -> SimulationRun:
+        row = connection.execute(
+            """SELECT r.payload,l.owner_id,l.fencing_token,l.lease_expires_at
+               FROM simulation_runs r
+               JOIN worker_leases l ON l.run_id=r.run_id WHERE r.run_id=?""",
+            (str(run_id),),
+        ).fetchone()
+        now = self._aware_now()
+        if (
+            row is None
+            or row["owner_id"] != owner_id
+            or int(row["fencing_token"]) != fencing_token
+            or datetime.fromisoformat(str(row["lease_expires_at"])) <= now
+        ):
+            raise OperationalStoreError("Worker does not own this simulation run")
+        return SimulationRun.model_validate_json(str(row["payload"]))
+
+    def _aware_now(self) -> datetime:
+        now = self._clock()
+        if now.tzinfo is None:
+            raise ConfigurationError("Operational store clock must be timezone-aware")
+        return now
+
+    @staticmethod
+    def _write_run(connection: sqlite3.Connection, run: SimulationRun) -> None:
+        connection.execute(
+            """UPDATE simulation_runs SET payload=?,status=?,approval_status=?,updated_at=?
+               WHERE run_id=?""",
+            (
+                run.model_dump_json(),
+                run.status.value,
+                run.approval_status.value,
+                run.updated_at.isoformat(),
+                str(run.run_id),
+            ),
+        )
 
     @staticmethod
     def _append_event(connection: sqlite3.Connection, event: AuditEvent) -> None:
         connection.execute("INSERT INTO audit_events(event_id,run_id,payload) VALUES(?,?,?)", (str(event.event_id), str(event.run_id), SqliteOperationalStore._dump(event)))
 
     @staticmethod
-    def _dump(model: AuditEvent | SimulationRun | WorkflowCheckpoint) -> str:
+    def _dump(
+        model: AuditEvent | SimulationRun | WorkflowCheckpoint | SimulationArtifacts,
+    ) -> str:
         try:
             return model.model_dump_json()
         except ValueError as error:

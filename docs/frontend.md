@@ -28,8 +28,8 @@ reverse proxy or configure an explicit allow-list at the API boundary.
 
 `VITE_API_BASE_URL` is optional. Leave it empty for the local proxy; set it to
 the same-origin API prefix when the frontend is served behind a reverse proxy.
-`VITE_POLL_INTERVAL_MS` controls refreshes for non-terminal runs and is clamped
-to a minimum of three seconds.
+`VITE_POLL_INTERVAL_MS` controls refreshes for active runs and is clamped to a
+minimum of three seconds.
 
 ## Authentication and authorization
 
@@ -57,10 +57,18 @@ The admin-only Security view reads non-sensitive posture and typed events from t
 The interface renders only values returned by the versioned FastAPI endpoints.
 Dashboard metrics are explicitly scoped to the current bounded API page; no
 global totals are inferred. Scenario choices come from `GET /api/v1/scenarios`.
-Run creation uses the existing idempotency header. Detailed analysis endpoints
-currently return `409` until a worker persists their result; this is shown as
-**Not available yet**, not as empty or fabricated attack-path, blast-radius,
-remediation, verification, or report data.
+Run creation uses the existing idempotency header. Detail polling covers `CREATED`,
+`RUNNING`, `WAITING_APPROVAL`, and `RESUMING`, and stops automatically on every terminal
+state or component unmount. Network and `429` failures use bounded backoff; `401` expires
+the in-memory session and `403` stops polling with a permission state. Result endpoints
+return `409` until `SUCCEEDED`; the UI shows **Not available yet**, never an empty or
+fabricated attack path, blast radius, remediation, verification, or report.
+
+Authorized operators receive a cancellation control only for active states. It requires
+explicit confirmation and calls the cooperative backend endpoint; it cannot terminate a
+process or execute infrastructure actions. `CANCELLED` is terminal and stops polling.
+Admins with `audit:read` can view the API's safe lifecycle timeline. Worker owner IDs,
+fencing internals, and raw audit metadata are not exposed to the browser.
 
 Remediation surfaces are labelled **PROPOSED REMEDIATION · SIMULATION ONLY**.
 The UI has no infrastructure action, apply, deploy, attack, exploit, Terraform,

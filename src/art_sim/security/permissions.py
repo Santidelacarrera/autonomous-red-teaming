@@ -15,6 +15,7 @@ class Permission(StrEnum):
     SIMULATION_CREATE = "simulation:create"
     SIMULATION_APPROVE = "simulation:approve"
     SIMULATION_REJECT = "simulation:reject"
+    SIMULATION_CANCEL = "simulation:cancel"
     SIMULATION_ADMIN = "simulation:admin"
     RISK_READ = "risk:read"
     ATTACK_PATH_READ = "attack_path:read"
@@ -39,7 +40,12 @@ _VIEWER = frozenset(
     }
 )
 _OPERATOR = _VIEWER | frozenset(
-    {Permission.SIMULATION_CREATE, Permission.SIMULATION_APPROVE, Permission.SIMULATION_REJECT}
+    {
+        Permission.SIMULATION_CREATE,
+        Permission.SIMULATION_APPROVE,
+        Permission.SIMULATION_REJECT,
+        Permission.SIMULATION_CANCEL,
+    }
 )
 ROLE_PERMISSIONS: dict[ApiRole, frozenset[Permission]] = {
     ApiRole.VIEWER: _VIEWER,

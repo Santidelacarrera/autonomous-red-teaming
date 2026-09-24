@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { SimulationRun } from "../api/types";
 import { SimulationListPage } from "./SimulationListPage";
 
-const run: SimulationRun = { run_id: "12345678-1234-4234-9234-123456789abc", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z", status: "running", scenario_id: "shadow-demo", graph_version: "v1", workflow_version: "v1", created_by: "alice", risk_before: null, risk_after: null, blast_radius_before: null, blast_radius_after: null, approval_status: "pending", approval_timestamp: null, verification_status: "not_run", artifacts: [], error_code: null };
+const run: SimulationRun = { run_id: "12345678-1234-4234-9234-123456789abc", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z", status: "running", scenario_id: "shadow-demo", graph_version: "v1", workflow_version: "v1", created_by: "alice", request_id: "request-1", trace_id: null, risk_before: null, risk_after: null, blast_radius_before: null, blast_radius_after: null, approval_status: "pending", approval_timestamp: null, approval_actor: null, verification_status: "not_run", artifacts: [], error_code: null, cancellation_requested: false, cancellation_requested_at: null, cancellation_actor: null };
 
 describe("SimulationListPage", () => {
   it("renders real API rows and uses the supplied selection callback", () => {

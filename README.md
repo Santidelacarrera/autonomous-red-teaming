@@ -10,11 +10,12 @@ explicit integration call.
 ## Architecture
 
 ```text
-Neo4j topology -> bounded path query -> LangGraph simulation
-                                      -> risk / blast-radius analysis
-                                      -> normalized remediation
-                                      -> human approval checkpoint
-                                      -> simulated verification -> Markdown report
+FastAPI -> durable run -> dispatcher -> worker -> LangGraph simulation
+                                          -> risk / blast-radius analysis
+                                          -> normalized remediation
+                                          -> durable human approval checkpoint
+                                          -> simulated verification
+                                          -> immutable result + Markdown report
 ```
 
 - `domain`: Pydantic entities, repository contract, and safe errors.
@@ -22,16 +23,21 @@ Neo4j topology -> bounded path query -> LangGraph simulation
 - `agents`: LangGraph recon, planner, supervisor, and mock simulator.
 - `attack`: reproducible in-memory path and risk engines.
 - `remediation`: normalized candidates, exporters, approval, and verification.
+- `worker`: durable claims, checkpoint recovery, Shadow workflow orchestration,
+  immutable result commits, a development process dispatcher, and provider-neutral
+  broker message/transport contracts.
 - `blast_radius`, `reporting`, `observability`: quantitative analysis, report
   rendering, lightweight spans, agent timings, and aggregate metrics.
 
 See the real component boundaries and dependency graph in
 [docs/architecture.md](docs/architecture.md).
 
-The operational layer persists secret-free `SimulationRun` records, append-only audit
-events, and versioned workflow snapshots through provider-neutral ports. The baseline
-SQLite adapter uses WAL plus transactions for a single-node or correctly locked shared
-filesystem deployment; it remains separate from Neo4j's Shadow topology.
+The operational layer persists secret-free `SimulationRun` records, execution leases,
+append-only audit events, immutable results, and versioned workflow snapshots through
+provider-neutral ports. The baseline SQLite adapter uses WAL and transactional
+compare-and-set for a single-node deployment; it remains separate from Neo4j's Shadow
+topology. The official async LangGraph saver shares the development database file but
+owns independent checkpoint tables.
 
 ## Security boundaries
 
@@ -132,7 +138,10 @@ python -m uvicorn art_sim.api.main:app --host 127.0.0.1 --port 8080
 
 Use the OpenAPI document at `/openapi.json`. Development authentication requires a
 deliberate header token and is rejected for production composition. Detailed endpoint,
-security, idempotency, and lifecycle semantics are in [API documentation](docs/api.md).
+security, idempotency, lifecycle, and persisted-result semantics are in
+[API documentation](docs/api.md). The local composition starts an asynchronous process
+worker, resumes durable checkpoints after restart, and serves results only after
+terminal `SUCCEEDED`.
 
 Identity is provider-neutral and authorization is permission-based in the backend.
 Local development retains the explicit development bearer format; non-development
@@ -140,14 +149,24 @@ profiles require an externally composed OIDC/JWT provider and fail closed. See t
 [security architecture](docs/security-architecture.md), [authentication](docs/authentication.md),
 [authorization](docs/authorization.md), and [security operations](docs/security-operations.md).
 
+Production has a separate `create_production_app(...)` dependency-injection root. It
+accepts only explicit OIDC, distributed rate-limiter, durable audit, secret-provider,
+operational-store, and distributed-dispatcher dependencies; it rejects the local process
+dispatcher, SQLite, environment-only secrets, and process telemetry. It does not
+construct or pretend to connect Redis, a broker, SIEM, a cloud secret manager, or a
+server database. Required MFA derives exclusively from an
+explicitly configured claim in a signature-verified OIDC token.
+
 ## Command Center frontend
 
 The React/Vite Command Center is an API-only dark operations interface for
 observing and requesting **defensive, Shadow-only** simulations. It shows
 bounded API pages, controlled scenario creation, run detail, API-provided risk,
-the existing simulated approval gate, and persisted analysis results. Results
-which have not yet been persisted by a worker are explicitly shown as unavailable;
-the UI never creates placeholder security findings or attack paths.
+the existing simulated approval gate, and persisted analysis results. The detail view
+polls all active lifecycle states, stops at terminal state, and uses bounded backoff for
+transient network or rate-limit responses. Results not yet persisted by a worker are
+explicitly shown as unavailable; the UI never creates placeholder security findings or
+attack paths.
 
 ```powershell
 # terminal 1
@@ -168,14 +187,24 @@ deployment boundary, tests, and the no-infrastructure-action guarantee.
 
 ## Limitations and production gaps
 
-The system is not yet a persistent, distributed production service. The operational
-layer includes an official SQLite-backed native LangGraph saver plus a durable SQLite
-store for run, audit, approval-CAS, and portable checkpoints. Managed secret
-integration, server-database coordination, external telemetry backend, deployment
-configuration, and a lockfile remain future work. See
+The repository now contains a durable single-process development worker with execution
+CAS, leases, bounded recovery, official LangGraph checkpoint resume, restart-safe HITL,
+immutable result persistence, fencing tokens, cooperative cancellation, versioned broker
+messages, and external-adapter contracts. It is not a distributed production service. A real
+broker/dispatcher, separately deployed workers, server-database coordination, managed
+secrets, external telemetry, and deployment configuration remain external work. See
+[worker architecture](docs/worker.md), [workflow orchestration](docs/workflow-orchestration.md),
+[result persistence](docs/result-persistence.md), and
 [production readiness](docs/production-readiness.md).
+Phase 12 details are in [distributed execution](docs/distributed-execution.md),
+[worker recovery](docs/worker-recovery.md), [operational store](docs/operational-store.md),
+and [dispatcher](docs/dispatcher.md).
 The exact tested surface is in [test matrix](docs/test-matrix.md) and the simulator's
 own attack surface is in [threat model](docs/threat-model.md).
+
+Any credential exposed outside its intended boundary, including a Neo4j password, must
+be rotated by an operator. The project does not print that value, modify `.env`, or
+perform an external rotation automatically.
 
 ## Validation
 

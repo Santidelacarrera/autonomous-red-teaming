@@ -14,10 +14,13 @@ required permission returns 403. Frontend route and control visibility mirrors t
 matrix but is not a security control.
 
 Approval is treated as sensitive: a verified permission is required, optional MFA
-step-up is evaluated from the authentication context, a subject-scoped rate limit is
+step-up is evaluated only from the verified authenticator context, a subject-scoped rate limit is
 applied, and the durable coordinator enforces waiting state plus compare-and-set. The
 existing remediation workflow separately verifies HMAC-bound approval evidence and
 rejects replay, duplicate decisions, invalid lifecycle, and forged state.
 
 No identity administration CRUD or password/secret endpoint exists. Future administration
 must use an injected external IdP administration adapter and explicit permissions.
+
+Client-provided headers or body fields do not participate in authorization or MFA. A
+viewer remains unable to approve even when its verified identity has MFA assurance.

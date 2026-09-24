@@ -8,7 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from art_sim.domain.exceptions import ConfigurationError
-from art_sim.security.secrets import SecretProvider
+from art_sim.security.secrets import AsyncSecretProvider, SecretProvider
 
 
 class RuntimeEnvironment(StrEnum):
@@ -41,6 +41,15 @@ class OperationalSettings(BaseModel):
     def approval_secret(self, provider: SecretProvider) -> bytes:
         """Resolve and validate signing material before starting a sensitive workflow."""
         value = provider.get_secret(self.approval_secret_name).get_secret_value().encode("utf-8")
+        if len(value) < 32:
+            raise ConfigurationError("approval secret must contain at least 32 bytes")
+        return value
+
+    async def approval_secret_async(self, provider: AsyncSecretProvider) -> bytes:
+        """Resolve stable production signing material through an async secret adapter."""
+        value = (
+            await provider.get_secret(self.approval_secret_name)
+        ).get_secret_value().encode("utf-8")
         if len(value) < 32:
             raise ConfigurationError("approval secret must contain at least 32 bytes")
         return value

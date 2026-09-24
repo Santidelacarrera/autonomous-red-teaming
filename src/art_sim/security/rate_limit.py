@@ -5,8 +5,17 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict, deque
 from dataclasses import dataclass
+from enum import StrEnum
 from time import monotonic
-from typing import Protocol
+from typing import ClassVar, Protocol
+
+
+class RateLimiterScope(StrEnum):
+    """Deployment capability declared by a rate-limiter adapter."""
+
+    DISABLED = "disabled"
+    PROCESS = "process"
+    DISTRIBUTED = "distributed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,11 +42,23 @@ class RateLimitDecision:
 class RateLimiter(Protocol):
     """Provider-neutral asynchronous limiter suitable for Redis or edge adapters."""
 
+    deployment_scope: ClassVar[RateLimiterScope]
+
     async def consume(self, key: str, policy: RateLimitPolicy) -> RateLimitDecision: ...
+
+
+class DistributedRateLimiter(RateLimiter, Protocol):
+    """Port for an atomic limiter shared by every production API replica.
+
+    Implementations must declare ``deployment_scope = RateLimiterScope.DISTRIBUTED``.
+    This project intentionally provides no fake Redis or edge adapter.
+    """
 
 
 class InMemoryRateLimiter:
     """Concurrency-safe rolling-window limiter for development and one process only."""
+
+    deployment_scope: ClassVar[RateLimiterScope] = RateLimiterScope.PROCESS
 
     def __init__(self) -> None:
         self._buckets: dict[tuple[str, str], deque[float]] = defaultdict(deque)
@@ -60,6 +81,8 @@ class InMemoryRateLimiter:
 
 class UnlimitedRateLimiter:
     """Explicitly disabled limiter for injected test compositions."""
+
+    deployment_scope: ClassVar[RateLimiterScope] = RateLimiterScope.DISABLED
 
     async def consume(self, key: str, policy: RateLimitPolicy) -> RateLimitDecision:
         """Allow without retaining identity or request data."""

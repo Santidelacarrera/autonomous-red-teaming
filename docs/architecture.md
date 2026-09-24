@@ -2,17 +2,24 @@
 
 ```mermaid
 flowchart TD
-    A[Shadow Neo4j topology] --> B[GraphRepository / ReconAgent]
-    B --> C[Sanitized topology context]
-    C --> D[LangGraph planner and supervisor]
-    D --> E[Mock execution simulator]
-    E --> F[SimulatedAttackGraph]
-    F --> G[RiskScorer and BlastRadiusCalculator]
-    G --> H[RemediationPlanner and exporters]
-    H --> I[HumanApprovalWorkflow]
-    I --> L[Operational Store: run checkpoint audit]
-    L --> J[RemediationVerifier]
-    J --> K[Markdown report]
+    API[FastAPI] --> SVC[SimulationService]
+    SVC --> STORE[Operational Store: run lease audit result]
+    SVC --> DISPATCH[SimulationDispatcher]
+    DISPATCH --> WORKER[SimulationWorker]
+    WORKER --> STORE
+    WORKER --> SCENARIO[Allow-listed Shadow scenario]
+    SCENARIO --> RECON[GraphRepository / ReconAgent]
+    RECON --> SAN[Sanitized topology context]
+    SAN --> LG[LangGraph planner and supervisor]
+    LG --> MOCK[Mock execution simulator]
+    MOCK --> ANALYSIS[Risk and blast-radius analysis]
+    ANALYSIS --> REM[Remediation proposal and review artifacts]
+    REM --> HITL[Durable HumanApprovalWorkflow]
+    HITL --> VERIFY[In-memory simulated verification]
+    VERIFY --> RESULT[Immutable artifacts and Markdown report]
+    RESULT --> STORE
+    SAVER[Official AsyncSqliteSaver] <--> LG
+    SAVER <--> HITL
 ```
 
 ## Components and public contracts
@@ -28,6 +35,7 @@ flowchart TD
 | Remediation | Produces normalized, review-only JSON/HCL/Rego/Gatekeeper artifacts. | No apply command is present. GitHub publishing is a separately injected adapter. |
 | HITL / verification | Interrupts before decision; validates HMAC and lifecycle; verifies a graph copy. | `MemorySaver` by default, injected verifier; no real remediation is applied. |
 | `platform` | Durable `SimulationRun`, portable checkpoints, append-only audit, approval compare-and-set, and health contracts. | SQLite WAL adapter runs short transactions through `asyncio.to_thread`; no secret values are persisted. |
+| `worker` | Claims durable work, resumes LangGraph checkpoints, executes deterministic Shadow analysis, and atomically commits terminal results. | Local dispatcher has process scope only; durable SQLite CAS and leases provide ownership. |
 | Reporting / telemetry | Renders Markdown and stores in-memory spans/metrics. | Optional JSON logging sink exists; no external tracing backend. |
 
 ## Dependency graph
@@ -39,6 +47,8 @@ domain <- attack <- blast_radius
 domain <- remediation <- reporting
 agents -> observability
 platform <- security
+platform <- worker -> agents
+worker -> attack, blast_radius, remediation, reporting
 ```
 
 There are no runtime import cycles in the audited graph. `ScopeViolationError` uses a
@@ -46,11 +56,28 @@ type-only import and a lazy constructor to avoid a domain-to-agent cycle. Infras
 is outside the domain boundary. The largest composition point is `AttackSimulationGraph`;
 it intentionally coordinates four injected collaborators and is not refactored here.
 
-## Simulation-run contract for Phase 7
+## Simulation-run contract
 
-`SimulationRun`, `WorkflowCheckpoint`, and `AuditEvent` are now versioned contracts.
-They correlate `run_id`, lifecycle, graph/workflow versions, before/after metrics,
-approval/verification status, artifact references, and safe error codes. The SQLite
-adapter implements the associated ports, and `sqlite_langgraph_checkpointer()` provides
-the compatible native LangGraph SQLite saver; a server database adapter remains a future
-substitution for multi-node deployments.
+`SimulationRun`, `WorkflowCheckpoint`, `AuditEvent`, execution claims, and immutable
+`SimulationArtifacts` are versioned contracts. They correlate `run_id`, request and
+trace identifiers, lifecycle, graph/workflow versions, approval/verification state,
+artifact references, and safe error codes. SQLite stores operational ownership and
+results while `sqlite_langgraph_checkpointer()` provides the official native LangGraph
+checkpoint tables in the same development database. These responsibilities remain
+separate even when they share a file.
+
+See [worker.md](worker.md), [workflow-orchestration.md](workflow-orchestration.md), and
+[result-persistence.md](result-persistence.md). A server database and distributed
+dispatcher remain required substitutions for multi-node production.
+
+## Phase 12 production boundary
+
+The API, application services, worker, and workflow depend only on ports. Production
+composition requires declared capabilities: verified OIDC, distributed rate limiting,
+durable audit, external secrets, server-grade operational storage, distributed dispatch,
+and external telemetry. SQLite and the local queue declare single-node/process scope and
+are rejected.
+
+`SimulationJobV1` crosses the broker boundary. A database fencing token, not broker
+delivery order, authorizes worker writes. See [distributed execution](distributed-execution.md)
+and [operational store](operational-store.md).

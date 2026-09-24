@@ -5,11 +5,11 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 from time import monotonic
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 import jwt
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from tenacity import (
     AsyncRetrying,
     retry_if_exception_type,
@@ -24,6 +24,7 @@ from art_sim.security.identity import (
     AuthenticationMethod,
     AuthenticationStrength,
     Identity,
+    IdentityProviderCapability,
 )
 from art_sim.security.permissions import permissions_for_roles
 
@@ -39,6 +40,8 @@ class OidcSettings(BaseModel):
     algorithms: tuple[str, ...] = ("RS256",)
     jwks_cache_seconds: int = Field(default=300, ge=30, le=86_400)
     clock_skew_seconds: int = Field(default=30, ge=0, le=300)
+    mfa_claim: str | None = Field(default=None, pattern=r"^[A-Za-z][A-Za-z0-9_.:/-]{0,127}$")
+    mfa_values: frozenset[str] = Field(default_factory=frozenset, max_length=32)
 
     @field_validator("issuer", "jwks_url")
     @classmethod
@@ -57,11 +60,29 @@ class OidcSettings(BaseModel):
             raise ValueError("OIDC algorithms must be approved asymmetric algorithms")
         return value
 
+    @field_validator("mfa_values")
+    @classmethod
+    def validate_mfa_values(cls, values: frozenset[str]) -> frozenset[str]:
+        """Accept only bounded exact values from the configured IdP contract."""
+        if any(not value or len(value) > 128 or value.strip() != value for value in values):
+            raise ValueError("OIDC MFA values must be non-empty normalized strings")
+        return values
+
+    @model_validator(mode="after")
+    def complete_mfa_contract(self) -> OidcSettings:
+        """Never infer an assurance claim or its accepted values."""
+        if (self.mfa_claim is None) != (not self.mfa_values):
+            raise ValueError("OIDC MFA claim and accepted values must be configured together")
+        return self
+
 
 class OidcIdentityProvider:
     """Validate signed JWT access tokens against an allow-listed OIDC provider."""
 
     provider_kind = "oidc"
+    deployment_capability: ClassVar[IdentityProviderCapability] = (
+        IdentityProviderCapability.OIDC_VERIFIED
+    )
 
     def __init__(self, settings: OidcSettings, client: httpx.AsyncClient | None = None) -> None:
         self._settings = settings
@@ -69,6 +90,11 @@ class OidcIdentityProvider:
         self._keys: dict[str, dict[str, Any]] = {}
         self._cache_deadline = 0.0
         self._lock = asyncio.Lock()
+
+    @property
+    def settings(self) -> OidcSettings:
+        """Expose immutable public configuration for composition-time consistency checks."""
+        return self._settings
 
     async def authenticate(self, authorization: str | None) -> Identity:
         """Extract one bearer token without exposing it in failures."""
@@ -174,8 +200,7 @@ class OidcIdentityProvider:
         roles = frozenset(ApiRole(role) for role in raw_roles if role in {item.value for item in ApiRole})
         if not roles:
             raise AuthenticationError("Authentication credential is invalid")
-        amr = claims.get("amr", [])
-        mfa = isinstance(amr, list) and any(value in {"mfa", "otp", "hwk"} for value in amr)
+        mfa = self._mfa_satisfied(claims)
         auth_time = claims.get("auth_time", claims["iat"])
         return Identity(
             subject=str(claims["sub"]),
@@ -191,3 +216,17 @@ class OidcIdentityProvider:
             token_id=str(claims["jti"]) if claims.get("jti") is not None else None,
             session_id=str(claims["sid"]) if claims.get("sid") is not None else None,
         )
+
+    def _mfa_satisfied(self, claims: dict[str, Any]) -> bool:
+        """Derive MFA only from a verified claim explicitly configured by the operator."""
+        claim_name = self._settings.mfa_claim
+        if claim_name is None or not self._settings.mfa_values:
+            return False
+        value = claims.get(claim_name)
+        if isinstance(value, str):
+            candidates = (value,)
+        elif isinstance(value, list) and all(isinstance(item, str) for item in value):
+            candidates = tuple(value)
+        else:
+            return False
+        return any(candidate in self._settings.mfa_values for candidate in candidates)

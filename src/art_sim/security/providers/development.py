@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import ClassVar
 
 from art_sim.domain.exceptions import AuthenticationError, ConfigurationError
 from art_sim.security.identity import (
@@ -10,6 +11,7 @@ from art_sim.security.identity import (
     AuthenticationContext,
     AuthenticationMethod,
     Identity,
+    IdentityProviderCapability,
 )
 from art_sim.security.permissions import permissions_for_roles
 
@@ -18,6 +20,9 @@ class DevelopmentHeaderAuthenticator:
     """Parse a local bearer identity only when explicitly enabled."""
 
     provider_kind = "development"
+    deployment_capability: ClassVar[IdentityProviderCapability] = (
+        IdentityProviderCapability.DEVELOPMENT
+    )
 
     def __init__(self, *, enabled: bool) -> None:
         if not enabled:

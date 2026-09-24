@@ -40,7 +40,7 @@ export interface SecurityStatus {
   metrics: Record<string, number>;
 }
 
-export type SimulationStatus = "created" | "running" | "waiting_approval" | "completed" | "failed" | "rejected";
+export type SimulationStatus = "created" | "running" | "waiting_approval" | "resuming" | "succeeded" | "completed" | "failed" | "rejected" | "cancelled";
 
 export interface SimulationRun {
   run_id: string;
@@ -51,16 +51,29 @@ export interface SimulationRun {
   graph_version: string;
   workflow_version: string;
   created_by: string;
+  request_id: string | null;
+  trace_id: string | null;
   risk_before: number | null;
   risk_after: number | null;
   blast_radius_before: number | null;
   blast_radius_after: number | null;
   approval_status: "pending" | "approved" | "rejected";
   approval_timestamp: string | null;
+  approval_actor: string | null;
   verification_status: "verified" | "partially_verified" | "failed" | "not_run";
   artifacts: string[];
   error_code: string | null;
+  cancellation_requested: boolean;
+  cancellation_requested_at: string | null;
+  cancellation_actor: string | null;
   created?: boolean;
+}
+
+export interface SimulationLifecycleEvent {
+  event_id: string;
+  timestamp: string;
+  event_type: string;
+  status: string;
 }
 
 export interface ApiEnvelopeError {

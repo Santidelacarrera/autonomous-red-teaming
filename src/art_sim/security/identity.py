@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Protocol
+from typing import ClassVar, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -29,6 +29,13 @@ class AuthenticationStrength(StrEnum):
 
     STANDARD = "standard"
     MFA = "mfa"
+
+
+class IdentityProviderCapability(StrEnum):
+    """Verification capability declared by an identity adapter."""
+
+    DEVELOPMENT = "development"
+    OIDC_VERIFIED = "oidc_verified"
 
 
 class AuthenticationContext(BaseModel):
@@ -68,6 +75,7 @@ class IdentityProvider(Protocol):
     """Authenticate a bearer credential through an injected provider."""
 
     provider_kind: str
+    deployment_capability: ClassVar[IdentityProviderCapability]
 
     async def authenticate(self, authorization: str | None) -> Identity: ...
 

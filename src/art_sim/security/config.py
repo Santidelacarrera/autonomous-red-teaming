@@ -58,6 +58,12 @@ class SecuritySettings(BaseModel):
             raise ValueError("Non-development profiles require complete OIDC configuration")
         if self.authentication_provider is AuthenticationProviderKind.OIDC and self.oidc is None:
             raise ValueError("OIDC provider requires issuer, audience, and JWKS configuration")
+        if (
+            self.mfa_required_for_sensitive_actions
+            and self.authentication_provider is AuthenticationProviderKind.OIDC
+            and (self.oidc is None or self.oidc.mfa_claim is None or not self.oidc.mfa_values)
+        ):
+            raise ValueError("Required MFA needs an explicit trusted OIDC claim contract")
         if "*" in self.cors_allowed_origins:
             raise ValueError("Wildcard CORS origins are forbidden")
         if self.environment is RuntimeEnvironment.PRODUCTION and not self.cors_allowed_origins:
@@ -82,11 +88,23 @@ class SecuritySettings(BaseModel):
         issuer = os.getenv("ART_OIDC_ISSUER")
         audience = os.getenv("ART_OIDC_AUDIENCE")
         jwks_url = os.getenv("ART_OIDC_JWKS_URL")
+        mfa_claim = os.getenv("ART_OIDC_MFA_CLAIM")
+        mfa_values = frozenset(
+            value.strip()
+            for value in os.getenv("ART_OIDC_MFA_VALUES", "").split(",")
+            if value.strip()
+        )
         oidc = None
         if any((issuer, audience, jwks_url)):
             if not all((issuer, audience, jwks_url)):
                 raise ConfigurationError("OIDC configuration is incomplete")
-            oidc = OidcSettings(issuer=issuer or "", audience=audience or "", jwks_url=jwks_url or "")
+            oidc = OidcSettings(
+                issuer=issuer or "",
+                audience=audience or "",
+                jwks_url=jwks_url or "",
+                mfa_claim=mfa_claim,
+                mfa_values=mfa_values,
+            )
         origins = tuple(value.strip() for value in os.getenv("ART_CORS_ALLOWED_ORIGINS", "").split(",") if value.strip())
         try:
             return cls(

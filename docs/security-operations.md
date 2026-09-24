@@ -14,15 +14,18 @@
   `ART_ADMIN_REQUESTS_PER_MINUTE`. Development uses an in-process limiter. Production
   must inject a distributed implementation and edge controls.
 - Security counters are aggregate only: authentication success/failure, authorization
-  denial, rate-limit excess, and approval denial. They contain no token or secret labels.
+  denial, MFA failure, rate-limit excess, and approval denial. They contain no token or
+  secret labels.
 
 ## Audit and alerting
 
-Typed security events include authentication success/failure, authorization denial,
+Typed security events include authentication success/failure, MFA failure, authorization denial,
 rate-limit excess, logout, simulation creation, approval decisions, and security-admin
 reads. Fields are restricted to event/time/type, subject, issuer, request ID, optional
 run ID, source and result. The schema cannot accept authorization headers, cookies,
-tokens, passwords, keys, arbitrary metadata, or raw request bodies.
+tokens, passwords, keys, arbitrary metadata, or raw request bodies. A central redactor
+also replaces bearer/JWT material and credential-labelled values in the remaining
+free-text fields before serialization.
 
 Alert on bursts of authentication failures, authorization denials, unauthorized approval
 attempts, admin reads, unknown JWT key IDs, and rate-limit excess. Production must export
@@ -38,6 +41,11 @@ edge caches, and validate all recent sensitive decisions. For suspicious approva
 pause workers, preserve immutable audit and checkpoint evidence, revoke the identity,
 and do not resume until HMAC and lifecycle state are verified.
 
-Secrets remain behind `SecretProvider`; production should use a managed secret service.
+Secrets remain behind provider-neutral ports; production rejects the environment adapter
+and requires an async external provider backed by a managed secret service.
 Never print or return approval material, IdP client secrets, database credentials, access
 tokens, refresh tokens, private keys, or full authorization/cookie headers.
+
+Any credential exposed outside its intended secret boundary must be rotated through its
+own provider. In particular, rotate an exposed Neo4j password; this repository does not
+perform that external operation and does not modify `.env` automatically.

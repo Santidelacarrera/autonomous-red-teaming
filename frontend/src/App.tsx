@@ -46,6 +46,8 @@ function CommandCenter() {
   useEffect(() => { if (route.view === "dashboard" || route.view === "simulations") void Promise.resolve().then(() => loadRuns(route.view === "simulations" ? page?.offset ?? 0 : 0)); }, [route.view, loadRuns, page?.offset]);
   const canCreate = auth.hasPermission("simulation:create");
   const canApprove = auth.hasPermission("simulation:approve") && auth.hasPermission("simulation:reject");
+  const canCancel = auth.hasPermission("simulation:cancel");
+  const canReadAudit = auth.hasPermission("audit:read");
   const canAdmin = auth.hasPermission("security:admin");
   const selectStatus = (nextStatus: SimulationStatus | "") => { setStatus(nextStatus); void loadRuns(0, nextStatus); };
   let content: React.ReactNode;
@@ -53,7 +55,7 @@ function CommandCenter() {
   else if (route.view === "simulations") content = <SimulationListPage page={page} status={status} loading={loading} error={error} onStatus={selectStatus} onRefresh={() => void loadRuns(page?.offset ?? 0)} onSelect={openRun} onPageChange={(offset) => void loadRuns(offset)} onCreate={() => navigate("new-simulation")} canCreate={canCreate} />;
   else if (route.view === "new-simulation") content = canCreate ? <NewSimulationPage api={api} canCreate onCreated={openRun} /> : <ErrorState error={new ApiClientError("Forbidden", 403, "FORBIDDEN", lastRequestId)} />;
   else if (route.view === "security") content = canAdmin ? <SecurityPage api={api} /> : <ErrorState error={new ApiClientError("Forbidden", 403, "FORBIDDEN", lastRequestId)} />;
-  else content = <SimulationDetailPage api={api} runId={route.runId ?? ""} canApprove={canApprove} onBack={() => navigate("simulations")} />;
+  else content = <SimulationDetailPage api={api} runId={route.runId ?? ""} canApprove={canApprove} canCancel={canCancel} canReadAudit={canReadAudit} onBack={() => navigate("simulations")} />;
   return <AppShell view={route.view} apiStatus={apiStatus} lastRequestId={lastRequestId} onNavigate={navigate} identity={identity} onLogout={() => void auth.logout()}>{content}</AppShell>;
 }
 

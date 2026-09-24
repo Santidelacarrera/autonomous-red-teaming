@@ -55,6 +55,7 @@ class HumanApprovalWorkflow:
         verifier: RemediationVerifier,
         checkpointer: BaseCheckpointSaver[Any] | None = None,
         approval_secret: bytes | None = None,
+        checkpoint_namespace: str = "remediation",
     ) -> None:
         """Inject verifier, checkpoint store, and stable production signing material.
 
@@ -69,6 +70,7 @@ class HumanApprovalWorkflow:
         self._verifier = verifier
         self._checkpointer = checkpointer or MemorySaver()
         self._approval_secret = approval_secret
+        self._checkpoint_namespace = checkpoint_namespace
         self._decision_locks: dict[UUID, asyncio.Lock] = {}
         self._graph = self._compile()
 
@@ -104,6 +106,52 @@ class HumanApprovalWorkflow:
                 {"approval_decision": decision, "approved_by": operator, "approval_reason": reason},
             )
             return await self._graph.ainvoke(None, config)
+
+    async def resume_recorded_decision(
+        self,
+        run_id: UUID,
+        *,
+        decision: ApprovalDecision,
+        operator: str,
+        reason: str,
+    ) -> dict[str, object]:
+        """Resume a durable API decision or recover its already completed checkpoint.
+
+        The operational-store CAS is the authority for accepting a decision. This
+        method remains idempotent only for the exact same recorded decision and actor.
+        """
+        if not operator.strip() or not reason.strip():
+            raise ApprovalRequiredError("Approval operator and reason are required")
+        config = self._config(run_id)
+        current = await self._graph.aget_state(config)
+        values = current.values
+        status = values.get("approval_status")
+        if status is ApprovalStatus.PENDING:
+            await self._graph.aupdate_state(
+                config,
+                {
+                    "approval_decision": decision,
+                    "approved_by": operator,
+                    "approval_reason": reason,
+                },
+            )
+            return await self._graph.ainvoke(None, config)
+        record = values.get("approval_record")
+        proof = values.get("approval_proof")
+        if (
+            isinstance(record, ApprovalRecord)
+            and isinstance(proof, str)
+            and record.decision is decision
+            and record.operator == operator
+            and hmac.compare_digest(proof, self._approval_proof(run_id, record))
+        ):
+            return dict(values)
+        raise ApprovalRequiredError("Recorded approval does not match the workflow checkpoint")
+
+    async def current(self, run_id: UUID) -> dict[str, object] | None:
+        """Return a checkpoint snapshot when this workflow has already started."""
+        values = (await self._graph.aget_state(self._config(run_id))).values
+        return dict(values) if values else None
 
     def _compile(self) -> CompiledStateGraph[RemediationFlowState, None, RemediationFlowState, RemediationFlowState]:
         """Compile a graph that interrupts before the human-decision node."""
@@ -191,10 +239,13 @@ class HumanApprovalWorkflow:
         """Only approved decisions proceed; rejected candidates stop without a simulated apply."""
         return "verification" if state["approval_status"] is ApprovalStatus.APPROVED else "end"
 
-    @staticmethod
-    def _config(run_id: UUID) -> RunnableConfig:
+    def _config(self, run_id: UUID) -> RunnableConfig:
         """Return the stable LangGraph checkpoint key for one remediation workflow run."""
-        return {"configurable": {"thread_id": str(run_id)}}
+        return {
+            "configurable": {
+                "thread_id": f"{run_id}:{self._checkpoint_namespace}",
+            }
+        }
 
     def _approval_proof(self, run_id: UUID, record: ApprovalRecord) -> str:
         """Bind approval evidence to a workflow and remediation without storing a secret in state."""

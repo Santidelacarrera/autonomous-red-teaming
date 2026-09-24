@@ -1,5 +1,28 @@
 # State machine audit
 
+The durable operational run and the inner remediation flow are distinct typed state
+machines.
+
+## Operational simulation run
+
+```text
+CREATED -> RUNNING -> SUCCEEDED
+                   -> WAITING_APPROVAL -> RESUMING -> RUNNING | SUCCEEDED | REJECTED
+                   -> FAILED | REJECTED | CANCELLED
+```
+
+`SUCCEEDED`, `FAILED`, `REJECTED`, and `CANCELLED` are terminal. Legacy `COMPLETED` is
+also terminal but is not emitted by the Phase 11 worker. Execution ownership is acquired
+with transactional compare-and-set and an expiring lease. Approval compare-and-set moves
+`WAITING_APPROVAL` to `RESUMING`; it cannot replace or replay the stored decision.
+
+Phase 12 implements cancellation as a durable request. `CREATED` and
+`WAITING_APPROVAL` can transition directly to `CANCELLED`; `RUNNING` and `RESUMING`
+record the request and a currently fenced worker commits `CANCELLED` at a safe boundary.
+Terminal states cannot be cancelled or resurrected.
+
+## Remediation flow
+
 `RemediationLifecycle` is the implemented lifecycle used by `HumanApprovalWorkflow`.
 
 ```text
@@ -14,11 +37,12 @@ any non-terminal active state -> FAILED
 `ApprovalRecord`; `VERIFIED` also requires a verified `VerificationResult`.
 
 The LangGraph attack-planning state is separate: recon -> planner -> supervisor ->
-mock simulator, with bounded supervisor replan attempts. It has no persisted lifecycle
-model yet and must not be confused with the remediation approval lifecycle.
+mock simulator, with bounded supervisor replan attempts. Phase 11 persists its official
+LangGraph checkpoint under `<run_id>:attack`; it must not be confused with either the
+operational run or remediation approval lifecycle.
 
-`HumanApprovalWorkflow.start()` pauses before its approval node. `decide()` accepts
-exactly one pending decision per `run_id` in the same process; a second decision is
-rejected. The HMAC binds `run_id`, remediation ID, operator, decision, and timestamp.
-Restart/resume requires an injected durable checkpointer and the same injected signing
-secret. Cross-process compare-and-set remains a Phase 7 concern.
+`HumanApprovalWorkflow.start()` pauses before its approval node. The API performs the
+cross-process durable decision CAS; the worker then calls
+`resume_recorded_decision()` with exactly that actor and decision. A mismatch or replay
+is rejected. The HMAC binds `run_id`, remediation ID, operator, decision, and timestamp.
+Restart/resume requires the durable checkpointer and the same injected signing secret.

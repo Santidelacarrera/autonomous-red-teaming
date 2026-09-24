@@ -75,3 +75,11 @@ class ApprovalRequiredError(GraphEngineError):
 
 class VerificationError(GraphEngineError):
     """Raised when post-remediation verification cannot analyze the simulated graph."""
+
+
+class ResultNotAvailableError(GraphEngineError):
+    """Raised when a run has not durably produced its final artifacts."""
+
+
+class WorkerStateError(GraphEngineError):
+    """Raised when a durable worker lifecycle or ownership invariant is violated."""

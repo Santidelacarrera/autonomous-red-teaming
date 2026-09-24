@@ -1,5 +1,5 @@
 import { ApiClient } from "./client";
-import type { Identity, Page, Scenario, SecurityStatus, SimulationRun, SimulationStatus } from "./types";
+import type { Identity, Page, Scenario, SecurityStatus, SimulationLifecycleEvent, SimulationRun, SimulationStatus } from "./types";
 
 export class SimulationApi {
   constructor(private readonly client: ApiClient) {}
@@ -20,6 +20,12 @@ export class SimulationApi {
   }
   decide(runId: string, decision: "approved" | "rejected"): Promise<SimulationRun> {
     return this.client.request(`/api/v1/simulations/${runId}/approval`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision }) });
+  }
+  cancel(runId: string): Promise<SimulationRun> {
+    return this.client.request(`/api/v1/simulations/${runId}/cancel`, { method: "POST" });
+  }
+  events(runId: string): Promise<{ items: SimulationLifecycleEvent[] }> {
+    return this.client.request(`/api/v1/simulations/${runId}/events`);
   }
   risk(runId: string): Promise<{ risk_before: number | null; risk_after: number | null; risk_delta: number | null }> {
     return this.client.request(`/api/v1/simulations/${runId}/risk`);

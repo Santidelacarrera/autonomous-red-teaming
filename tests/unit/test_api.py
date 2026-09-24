@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from uuid import UUID
 
 from fastapi.testclient import TestClient
 
@@ -10,7 +11,6 @@ from art_sim.api.app import create_app
 from art_sim.api.security import DevelopmentHeaderAuthenticator
 from art_sim.api.services import ApprovalService, ScenarioCatalog, SimulationService
 from art_sim.platform.health import HealthService
-from art_sim.platform.models import SimulationRunStatus
 from art_sim.platform.sqlite import SqliteOperationalStore
 
 
@@ -74,9 +74,9 @@ async def test_approval_enforces_roles_and_durable_compare_and_set(tmp_path: Pat
     operator = {"Authorization": "Bearer development:operator:alice"}
     created = client.post("/api/v1/simulations", headers=operator, json={"scenario_id": "shadow-demo"})
     run_id = created.json()["run_id"]
-    from uuid import UUID
-
-    await store.update_status(UUID(run_id), SimulationRunStatus.WAITING_APPROVAL)
+    claim = await store.acquire_execution(UUID(run_id), "api-test", UUID(int=1))
+    assert claim is not None
+    await store.mark_waiting_approval(UUID(run_id), "api-test", claim.fencing_token)
     viewer = {"Authorization": "Bearer development:viewer:bob"}
     assert client.post(f"/api/v1/simulations/{run_id}/approval", headers=viewer, json={"decision": "approved"}).status_code == 403
     approved = client.post(f"/api/v1/simulations/{run_id}/approval", headers=operator, json={"decision": "approved"})
@@ -104,5 +104,5 @@ async def test_analysis_result_endpoints_never_invent_unpersisted_data(tmp_path:
     for suffix in ("attack-paths", "blast-radius", "remediations", "verification", "report"):
         response = client.get(f"/api/v1/simulations/{run_id}/{suffix}", headers=headers)
         assert response.status_code == 409
-        assert response.json()["error"]["code"] == "API_REQUEST_REJECTED"
+        assert response.json()["error"]["code"] == "RESULT_NOT_AVAILABLE"
     assert client.get(f"/api/v1/simulations/{run_id}/report?format=pdf", headers=headers).status_code == 422
