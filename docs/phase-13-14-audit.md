@@ -1,5 +1,9 @@
 # Phases 13 and 14 audit record
 
+Historical record: the Docker-blocked results below were superseded by the final release
+validation in [FINAL_RELEASE_AUDIT.md](FINAL_RELEASE_AUDIT.md). Do not use this file as the
+current release decision.
+
 Date: 2026-09-24
 
 Overall status: `READY WITH EXTERNAL DEPENDENCY`

@@ -20,8 +20,9 @@
 
 The Python locks are exact but do not contain hashes because the local cross-platform
 hash resolution did not complete. Artifact SHA-256 values protect produced evidence, not
-dependency download provenance. Hosted CI and image scanning are workflow definitions
-until a real run is inspected; they are not marked PASS by this local audit.
+dependency download provenance. The local Grype 0.119.0 scan is real evidence and fails the
+configured `high` threshold with 50 High findings; the hosted CI run remains unexecuted.
+The local Syft 1.52.0 CycloneDX image SBOM is retained under ignored `var/audit/`.
 
 The base-image digest and Action commits were resolved on 2026-09-24. They are immutable
 inputs but still require an explicit dependency-update process. Provenance is configured,
@@ -29,3 +30,8 @@ not validated: this local environment cannot mint a GitHub-hosted OIDC attestati
 promotion, execute the hosted workflow, retain SBOM/scan/hash artifacts, and verify the
 attestation from a separate trust context. The container image itself is not published or
 attested by this workflow, and the Python locks do not yet include download hashes.
+
+The previous Python 3.12.12/Bookworm base produced 16 Critical and 124 High matches. A
+comparative migration to the current digest-pinned Python 3.13.15/Trixie base eliminated
+all Critical matches and reduced High matches to 50. The remaining findings have not been
+accepted or suppressed, so supply-chain promotion remains blocked.

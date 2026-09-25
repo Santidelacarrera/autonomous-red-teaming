@@ -14,10 +14,12 @@
 | Python audit | `python -m pip_audit -r requirements.lock` | PASS — no known vulnerabilities |
 | npm audit | `npm audit --audit-level=high` | PASS — 0 vulnerabilities |
 | Shadow E2E | `python scripts/run_e2e.py` | PASS |
-| Python/frontend SBOM/hash evidence | `cyclonedx-py ...`, `npm sbom`, manifest script | PASS — ignored `var/audit/` output |
+| Python/frontend/image SBOM + hash evidence | CycloneDX generators + manifest script | PASS — 8 hashed evidence files under ignored `var/audit/` |
 | Release configuration integrity | YAML/pin/digest validation | PASS — 11/11 Actions pinned, 2/2 Docker stages digest-pinned |
-| Docker build/start/health | `docker build ...` | BLOCKED BY LOCAL ENVIRONMENT |
-| Image scan | CI Anchore job | NOT EXECUTED locally |
+| Docker build/start/health/readiness/SIGTERM | hardened local image execution | PASS — healthy, HTTP 200/200, exit 0 |
+| Container runtime security | inspect + `/proc/1/status` + write probes | PASS — UID 10001, zero capabilities, NNP/seccomp, read-only rootfs |
+| Image scan | Grype 0.119.0, threshold `high` | FAIL — 0 Critical, 50 High, exit 2 |
+| Image SBOM | Syft 1.52.0 CycloneDX 1.7 | PASS — 2,941 named/ref components |
 | Gitleaks | CI secret-scan job | NOT EXECUTED locally — CLI unavailable |
 | GitHub artifact provenance | commit-pinned CI attestation step | CONFIGURED — NOT EXECUTED in hosted CI |
 
@@ -43,4 +45,5 @@
 
 No production vendor service is emulated as evidence of a real integration. No load
 benchmark, coverage percentage, hosted CI result, container scan result, RPO or RTO is
-claimed by this local audit.
+claimed without local or hosted evidence. The local container scan is explicitly recorded
+as failed and blocks release promotion.

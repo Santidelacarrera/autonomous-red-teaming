@@ -277,9 +277,10 @@ accepted work and close injected dependencies.
 The Phase 14 local audit executes unit, integration, security, concurrency, recovery,
 frontend and controlled Shadow E2E suites. The current verified count is **121 backend
 tests** and **19 frontend tests**; Ruff and strict Mypy (99 Python files), frontend
-lint/typecheck/build, `pip-audit`, and `npm audit` pass. Docker image execution remains
-blocked by the local
-Docker daemon and is not reported as passed. See [test matrix](docs/test-matrix.md).
+lint/typecheck/build, `pip-audit`, and `npm audit` pass. The pinned Docker image builds,
+runs under the hardened invocation, passes local health/readiness and shuts down cleanly.
+The Grype image scan fails the configured `high` threshold, so the release is not ready
+for promotion. See [test matrix](docs/test-matrix.md).
 
 ## 18. Security Testing
 
@@ -299,13 +300,15 @@ races, credential leakage, malicious scenarios, API abuse, tampering and denial 
 See the objective [production-readiness matrix](docs/production-readiness.md). Application
 boundaries are implemented, but mandatory broker, server database, Secret Manager, OIDC
 tenant, distributed rate limiter, SIEM, telemetry backend and TLS edge are not connected.
-Current overall status: **READY WITH EXTERNAL DEPENDENCY**.
+Current overall status: **NOT READY** because the local image scan contains 50 unresolved
+High findings and no reviewed risk disposition. External production dependencies also
+remain unconnected.
 
 ### Validated locally
 
 Application tests/static analysis, frontend build, dependency audits, Shadow E2E, source
-SBOMs/hashes, local liveness/readiness, immutable base-image resolution and immutable
-GitHub Action references.
+SBOMs/hashes, immutable base/action references, Docker build, image inspection, hardened
+runtime, container health/readiness/SIGTERM and Syft image SBOM generation.
 
 ### Validated with external infrastructure
 
@@ -319,8 +322,9 @@ audit/telemetry boundaries, TLS edge contract, Anchore gates and GitHub provenan
 
 ### Not yet validated
 
-Concrete production adapters, migrations, deployment, container runtime/image scan/image
-SBOM, hosted provenance verification, backup/restore and multi-region recovery.
+Concrete production adapters, migrations, deployment, hosted provenance verification,
+backup/restore and multi-region recovery. The image scan was executed but failed; its High
+findings require remediation or formal review rather than being treated as unvalidated.
 
 ## 21. Operational Runbooks
 
@@ -336,8 +340,9 @@ SBOM, hosted provenance verification, backup/restore and multi-region recovery.
 Python has exact runtime and development lockfiles; npm uses `package-lock.json`. CI runs
 Ruff, Mypy, Pytest, frontend checks, `pip-audit`, `npm audit`, Gitleaks, wheel build,
 CycloneDX SBOM generation, SHA-256 evidence, container build and Anchore image scan.
-The Phase 14 audit generated and validated local CycloneDX Python/frontend SBOMs plus a
-SHA-256 manifest under ignored `var/audit/`; image scanning still requires a built image.
+The release audit generated and validated local CycloneDX Python/frontend/image SBOMs plus
+a SHA-256 manifest under ignored `var/audit/`. Grype 0.119.0 and Syft 1.52.0 are versioned
+explicitly in CI; the local Grype result fails the `high` cutoff.
 All Actions use immutable commit SHAs. GitHub artifact provenance is configured for
 `push`, but remains unvalidated until a hosted workflow emits and independently verifies
 an attestation.
@@ -346,14 +351,20 @@ an attestation.
 
 ```powershell
 docker build -t art-sim:local .
-docker run --rm --read-only --tmpfs /tmp -p 8080:8080 art-sim:local
+docker run --rm --read-only `
+  --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m `
+  --tmpfs /app/var:rw,noexec,nosuid,nodev,size=64m,uid=10001,gid=10001 `
+  --cap-drop ALL --security-opt no-new-privileges:true `
+  --pids-limit 128 --memory 512m --cpus 1 `
+  -p 127.0.0.1:8080:8080 art-sim:local
 ```
 
-The multi-stage image installs the runtime lock only, runs as UID/GID 10001, exposes one
-writable application directory, excludes `.env`, defines `/health`, and uses `SIGTERM`.
-The base image uses an exact patch tag plus an immutable manifest-list digest. The latest
-local build attempt is `BLOCKED BY LOCAL ENVIRONMENT` because Docker Desktop/Linux daemon
-is stopped.
+The multi-stage image installs the runtime lock only, runs as UID/GID 10001, excludes
+`.env`, defines `/health`, and uses `SIGTERM`. Python 3.13.15/Trixie is pinned by immutable
+manifest-list digest. The validated invocation used a read-only root filesystem, tmpfs at
+`/tmp` and `/app/var`, zero capabilities, `no-new-privileges`, seccomp and bounded PID/CPU/
+memory. Health and readiness returned 200 and SIGTERM exited 0. The image must not be
+promoted while the configured vulnerability gate fails.
 
 ## 24. CI/CD
 
@@ -399,8 +410,8 @@ security.
 - TLS/API gateway/WAF, backups, retention jobs, multi-region coordination and deployment
   are external.
 - Python locks are exact but not hash-complete.
-- Local Docker build/start/health and image scan were not executed because the daemon is
-  unavailable.
+- The current Grype image scan reports 0 Critical and 50 High findings and fails the
+  configured release threshold; no risk acceptance is recorded.
 - GitHub artifact provenance is configured but has no hosted execution/verification
   evidence; container provenance is not configured.
 

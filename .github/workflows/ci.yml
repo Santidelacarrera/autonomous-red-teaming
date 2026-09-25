@@ -94,6 +94,7 @@ jobs:
         uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
         with:
           image: art-sim:${{ github.sha }}
+          grype-version: v0.119.0
           fail-build: true
           severity-cutoff: high
           output-format: sarif
@@ -101,5 +102,6 @@ jobs:
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           image: art-sim:${{ github.sha }}
+          syft-version: v1.52.0
           format: cyclonedx-json
           output-file: container-sbom.cdx.json
