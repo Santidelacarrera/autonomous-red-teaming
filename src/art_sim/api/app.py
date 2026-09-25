@@ -20,6 +20,7 @@ from art_sim.api.services import (
     ApprovalService,
     CancellationService,
     SimulationResultService,
+    SimulationReviewService,
     SimulationService,
 )
 from art_sim.domain.exceptions import (
@@ -35,7 +36,7 @@ from art_sim.platform.config import RuntimeEnvironment
 from art_sim.platform.health import HealthService
 from art_sim.platform.models import SimulationRun, SimulationRunStatus
 from art_sim.platform.sqlite import OperationalStoreError
-from art_sim.remediation.models import ApprovalDecision
+from art_sim.remediation.models import ApprovalDecision, PreApprovalStatus
 from art_sim.security.audit import (
     AuditDurability,
     NullSecurityAuditSink,
@@ -64,12 +65,22 @@ class CreateSimulationRequest(BaseModel):
     scenario_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,127}$")
 
 
+class BatchCreateSimulationRequest(BaseModel):
+    """Bounded repetition of one allow-listed Shadow scenario."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scenario_ids: tuple[str, ...] = Field(min_length=1, max_length=10)
+    count: int = Field(ge=1, le=10)
+
+
 class ApprovalRequest(BaseModel):
     """One human decision; backend CAS controls all state transitions."""
 
     model_config = ConfigDict(extra="forbid")
 
     decision: ApprovalDecision
+    reason: str = Field(min_length=10, max_length=512)
 
 
 class ApiError(BaseModel):
@@ -98,6 +109,7 @@ def create_app(
     security_metrics: MetricsRegistry | None = None,
     session_lifecycle: SessionLifecycle | None = None,
     result_service: SimulationResultService | None = None,
+    review_service: SimulationReviewService | None = None,
     cancellation_service: CancellationService | None = None,
 ) -> FastAPI:
     """Compose the HTTP layer entirely from injected application services."""
@@ -345,6 +357,40 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail="Scenario is not configured") from exc
 
+    @app.post("/api/v1/simulations/batch", status_code=202, tags=["simulations"])
+    async def create_simulation_batch(
+        request: Request,
+        body: BatchCreateSimulationRequest,
+        idempotency_key: str = Header(alias="Idempotency-Key"),
+        identity: Principal = Depends(require(Permission.SIMULATION_CREATE)),  # noqa: B008
+    ) -> dict[str, object]:
+        """Queue at most ten isolated simulations; final approval remains per run."""
+        await limit(
+            request,
+            identity.subject,
+            RateLimitPolicy("simulation_create", security.simulation_creates_per_minute),
+        )
+        try:
+            runs = await simulation_service.create_batch(
+                body.scenario_ids,
+                body.count,
+                identity.subject,
+                idempotency_key,
+                request.state.request_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Batch request is invalid") from exc
+        for run in runs:
+            metrics.increment("simulation_created_total")
+            await emit(
+                request,
+                SecurityEventType.SIMULATION_CREATED,
+                "succeeded",
+                identity,
+                run.run_id,
+            )
+        return {"items": [_run_response(run) for run in runs], "count": len(runs)}
+
     @app.get("/api/v1/scenarios", tags=["scenarios"])
     async def scenarios(_: Principal = Depends(require(Permission.SIMULATION_READ))) -> dict[str, object]:  # noqa: B008
         return {"items": [{"scenario_id": scenario_id} for scenario_id in simulation_service.scenarios()]}
@@ -432,7 +478,21 @@ def create_app(
             raise HTTPException(status_code=403, detail="Step-up authentication is required")
         await limit(request, identity.subject, RateLimitPolicy("approval", security.approval_requests_per_minute))
         try:
-            approved_run = await approval_service.decide(str(run_id), body.decision, identity.subject)
+            if review_service is not None:
+                review_package = await review_service.get(run_id)
+                if (
+                    review_package.automated_preapproval.status
+                    is not PreApprovalStatus.RECOMMENDED
+                ):
+                    raise ApprovalRequiredError(
+                        "Automated pre-approval blocked this countermeasure"
+                    )
+            approved_run = await approval_service.decide(
+                str(run_id),
+                body.decision,
+                identity.subject,
+                body.reason,
+            )
             event_type = SecurityEventType.APPROVAL_APPROVED if body.decision is ApprovalDecision.APPROVED else SecurityEventType.APPROVAL_REJECTED
             await emit(request, event_type, "succeeded", identity, run_id)
             return _run_response(approved_run)
@@ -478,6 +538,18 @@ def create_app(
                 item.model_dump(mode="json") for item in result.remediation_artifacts
             ],
         }
+
+    @app.get("/api/v1/simulations/{run_id}/review", tags=["remediation"])
+    async def review(
+        run_id: UUID,
+        _: Principal = Depends(require(Permission.REMEDIATION_READ)),  # noqa: B008
+    ) -> dict[str, object]:
+        """Return the exact countermeasure evidence available to the human reviewer."""
+        if review_service is None:
+            await simulation_service.get(str(run_id))
+            raise ResultNotAvailableError("Simulation review persistence is not configured")
+        package = await review_service.get(run_id)
+        return package.model_dump(mode="json")
 
     @app.get("/api/v1/simulations/{run_id}/verification", tags=["verification"])
     async def verification(run_id: UUID, _: Principal = Depends(require(Permission.VERIFICATION_READ))) -> dict[str, object]:  # noqa: B008

@@ -46,3 +46,13 @@ cross-process durable decision CAS; the worker then calls
 `resume_recorded_decision()` with exactly that actor and decision. A mismatch or replay
 is rejected. The HMAC binds `run_id`, remediation ID, operator, decision, and timestamp.
 Restart/resume requires the durable checkpointer and the same injected signing secret.
+
+Before `WAITING_APPROVAL`, the worker atomically persists an immutable review package
+containing the normalized countermeasure, generated policy, content SHA-256, baseline
+risk/blast radius and a verification preview computed on a graph copy. Production and
+local API compositions reject a blind approval when this package is absent. The human
+decision also requires a bounded rationale that is persisted with the verified actor.
+Automated pre-approval checks artifact integrity, simulation-only scope, path removal,
+risk reduction and verification success. A blocked recommendation cannot be approved
+through the local or production API; a recommended result still remains pending until a
+human reviewer records the final decision for that individual run.

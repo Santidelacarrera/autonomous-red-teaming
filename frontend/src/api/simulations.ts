@@ -1,5 +1,5 @@
 import { ApiClient } from "./client";
-import type { Identity, Page, Scenario, SecurityStatus, SimulationLifecycleEvent, SimulationRun, SimulationStatus } from "./types";
+import type { Identity, Page, Scenario, SecurityStatus, SimulationLifecycleEvent, SimulationReview, SimulationRun, SimulationStatus } from "./types";
 
 export class SimulationApi {
   constructor(private readonly client: ApiClient) {}
@@ -18,9 +18,13 @@ export class SimulationApi {
   create(scenarioId: string, idempotencyKey: string): Promise<SimulationRun> {
     return this.client.request("/api/v1/simulations", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey }, body: JSON.stringify({ scenario_id: scenarioId }) });
   }
-  decide(runId: string, decision: "approved" | "rejected"): Promise<SimulationRun> {
-    return this.client.request(`/api/v1/simulations/${runId}/approval`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision }) });
+  createBatch(scenarioIds: string[], count: number, idempotencyKey: string): Promise<{ items: SimulationRun[]; count: number }> {
+    return this.client.request("/api/v1/simulations/batch", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey }, body: JSON.stringify({ scenario_ids: scenarioIds, count }) });
   }
+  decide(runId: string, decision: "approved" | "rejected", reason: string): Promise<SimulationRun> {
+    return this.client.request(`/api/v1/simulations/${runId}/approval`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision, reason }) });
+  }
+  review(runId: string): Promise<SimulationReview> { return this.client.request(`/api/v1/simulations/${runId}/review`); }
   cancel(runId: string): Promise<SimulationRun> {
     return this.client.request(`/api/v1/simulations/${runId}/cancel`, { method: "POST" });
   }

@@ -78,8 +78,9 @@ docs/               Architecture, operations, security and recovery documentatio
 
 ## 5. Core Components
 
-- **API / SimulationService:** validates allow-listed scenario requests, persists the run
-  before dispatch, enforces idempotency, pagination, lifecycle and backend permissions.
+- **API / SimulationService:** validates allow-listed single or bounded batch requests,
+  persists every run before dispatch, and enforces idempotency, pagination, lifecycle and
+  backend permissions. Local mixed batches rotate through five controlled Shadow routes.
 - **Dispatcher / Broker:** local development queue or a provider-neutral distributed
   boundary for Redis Streams, RabbitMQ, Kafka, or SQS adapters supplied by deployment.
 - **Worker / LangGraph:** claims one run with a lease and fencing token, executes only a
@@ -89,7 +90,8 @@ docs/               Architecture, operations, security and recovery documentatio
 - **Risk, attack path and blast radius engines:** deterministic bounded analysis before
   data reaches agent planning.
 - **Remediation / verification / reporting:** generates review-only IaC/policy candidates,
-  verifies their simulated effect, and renders correlated evidence.
+  verifies their simulated effect, applies deterministic automated pre-approval checks,
+  and renders correlated evidence. Pre-approval never replaces HITL authorization.
 - **Operational Store:** SQLite implementation for development; server-grade transaction,
   CAS, lease, fencing, checkpoint and artifact contract for production.
 - **Audit / telemetry / identity / secrets:** typed provider-neutral boundaries with
@@ -104,7 +106,8 @@ CREATED -> RUNNING -> WAITING_APPROVAL -> RESUMING -> SUCCEEDED
 ```
 
 `CREATED` is durably accepted; `RUNNING` has a fenced owner; `WAITING_APPROVAL` has a
-checkpoint but no applied change; `RESUMING` continues after one CAS-protected decision;
+checkpoint plus an immutable review package but no applied change; `RESUMING` continues
+after one CAS-protected decision;
 `SUCCEEDED` has one immutable artifact set. `FAILED`, `CANCELLED`, `REJECTED`, and the
 legacy `COMPLETED` value are terminal. Exhausted retries terminate as `FAILED` with
 `MAX_ATTEMPTS_EXCEEDED`; it is an error code, not a separate persisted status.
@@ -164,6 +167,7 @@ data is limited to the controlled scenario catalog and persisted run identifiers
 | POST | `/api/v1/logout` | End local session context | `simulation:read` |
 | GET | `/api/v1/scenarios` | Allow-listed Shadow scenarios | `simulation:read` |
 | POST | `/api/v1/simulations` | Create/idempotently dispatch | `simulation:create`; configured scenario |
+| POST | `/api/v1/simulations/batch` | Create 1–10 isolated runs across selected scenarios | `simulation:create`; configured scenarios; idempotency key |
 | GET | `/api/v1/simulations` | Paginated run list | `simulation:read` |
 | GET | `/api/v1/simulations/{run_id}` | Run lifecycle | `simulation:read` |
 | POST | `/api/v1/simulations/{run_id}/approval` | Approve/reject checkpoint | approve/reject permission; waiting state; MFA when configured |
@@ -172,6 +176,7 @@ data is limited to the controlled scenario catalog and persisted run identifiers
 | GET | `/api/v1/simulations/{run_id}/attack-paths` | Simulated paths | `attack_path:read`; result available |
 | GET | `/api/v1/simulations/{run_id}/blast-radius` | Simulated impact | `blast_radius:read`; result available |
 | GET | `/api/v1/simulations/{run_id}/remediations` | Review-only candidates | `remediation:read`; result available |
+| GET | `/api/v1/simulations/{run_id}/review` | Countermeasure, digest and simulated before/after evidence | `remediation:read`; persisted review available |
 | GET | `/api/v1/simulations/{run_id}/verification` | Simulated verification | `verification:read`; result available |
 | GET | `/api/v1/simulations/{run_id}/report` | Markdown report | `report:read`; result available |
 | GET | `/api/v1/simulations/{run_id}/events` | Safe timeline | `audit:read` |
@@ -181,8 +186,10 @@ data is limited to the controlled scenario catalog and persisted run identifiers
 
 The React/Vite command center authenticates through an injected OIDC client boundary,
 protects routes, hides actions that the role cannot perform, polls only active runs with
-bounded backoff, supports cancellation, and stops polling terminal states. It talks only
-to the API and cannot invoke infrastructure tooling. Development bearer identity is
+bounded backoff, supports cancellation, and stops polling terminal states. HITL approval
+requires an immutable review package, a passing automated recommendation and a reviewer
+rationale. Batch creation supports 1–10 runs while decisions remain individual. It talks
+only to the API and cannot invoke infrastructure tooling. Development bearer identity is
 available only in development builds. See [frontend](docs/frontend.md).
 
 ## 12. Configuration
@@ -275,8 +282,8 @@ accepted work and close injected dependencies.
 ## 17. Testing
 
 The Phase 14 local audit executes unit, integration, security, concurrency, recovery,
-frontend and controlled Shadow E2E suites. The current verified count is **121 backend
-tests** and **19 frontend tests**; Ruff and strict Mypy (99 Python files), frontend
+frontend and controlled Shadow E2E suites. The current verified count is **122 backend
+tests** and **20 frontend tests**; Ruff and strict Mypy (97 Python files), frontend
 lint/typecheck/build, `pip-audit`, and `npm audit` pass. The pinned Docker image builds,
 runs under the hardened invocation, passes local health/readiness and shuts down cleanly.
 The Grype image scan fails the configured `high` threshold, so the release is not ready

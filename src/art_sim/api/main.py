@@ -17,6 +17,7 @@ from art_sim.api.services import (
     CancellationService,
     ScenarioCatalog,
     SimulationResultService,
+    SimulationReviewService,
     SimulationService,
 )
 from art_sim.domain.exceptions import ConfigurationError
@@ -28,7 +29,7 @@ from art_sim.security.audit import InMemorySecurityAuditSink
 from art_sim.security.config import SecuritySettings
 from art_sim.security.rate_limit import InMemoryRateLimiter
 from art_sim.worker.dispatcher import LocalSimulationDispatcher
-from art_sim.worker.fixtures import shadow_demo_scenario
+from art_sim.worker.fixtures import shadow_scenario_catalog
 from art_sim.worker.shadow import InMemoryScenarioRepository
 from art_sim.worker.worker import SimulationWorker
 from art_sim.worker.workflow import DurableSimulationWorkflow
@@ -50,10 +51,13 @@ def create_local_app() -> FastAPI:
         os.getenv("ART_SIM_OPERATIONAL_DB", str(settings.operational_database))
     )
     store = SqliteOperationalStore(database_path)
-    dispatcher = LocalSimulationDispatcher(store)
-    scenario = shadow_demo_scenario()
-    catalog = ScenarioCatalog((scenario.scenario_id,))
-    scenarios = InMemoryScenarioRepository((scenario,))
+    dispatcher = LocalSimulationDispatcher(
+        store,
+        concurrency=int(os.getenv("ART_LOCAL_WORKER_CONCURRENCY", "10")),
+    )
+    configured_scenarios = shadow_scenario_catalog()
+    catalog = ScenarioCatalog(tuple(item.scenario_id for item in configured_scenarios))
+    scenarios = InMemoryScenarioRepository(configured_scenarios)
 
     async def store_ready() -> None:
         await store.list_runs(limit=1)
@@ -93,6 +97,7 @@ def create_local_app() -> FastAPI:
         rate_limiter=InMemoryRateLimiter(),
         security_audit=InMemorySecurityAuditSink(),
         result_service=SimulationResultService(store),
+        review_service=SimulationReviewService(store),
         cancellation_service=CancellationService(store, dispatcher),
     )
 

@@ -192,7 +192,7 @@ async def test_approval_with_required_verified_mfa_is_allowed(tmp_path: Path) ->
     response = client.post(
         f"/api/v1/simulations/{run_id}/approval",
         headers={"Authorization": f"Bearer {token}"},
-        json={"decision": "approved"},
+        json={"decision": "approved", "reason": "Reviewed simulated countermeasure evidence."},
     )
     assert response.status_code == 200
 
@@ -205,7 +205,7 @@ async def test_approval_with_required_missing_mfa_is_denied(tmp_path: Path) -> N
     response = client.post(
         f"/api/v1/simulations/{run_id}/approval",
         headers={"Authorization": f"Bearer {token}"},
-        json={"decision": "approved"},
+        json={"decision": "approved", "reason": "Reviewed simulated countermeasure evidence."},
     )
     assert response.status_code == 403
     assert SecurityEventType.MFA_FAILURE in {event.event_type for event in await audit.recent()}
@@ -219,7 +219,7 @@ async def test_approval_with_required_invalid_mfa_is_denied(tmp_path: Path) -> N
     response = client.post(
         f"/api/v1/simulations/{run_id}/approval",
         headers={"Authorization": f"Bearer {token}"},
-        json={"decision": "approved"},
+        json={"decision": "approved", "reason": "Reviewed simulated countermeasure evidence."},
     )
     assert response.status_code == 403
 
@@ -232,7 +232,7 @@ async def test_arbitrary_header_cannot_activate_mfa(tmp_path: Path) -> None:
     response = client.post(
         f"/api/v1/simulations/{run_id}/approval",
         headers={"Authorization": f"Bearer {token}", "X-MFA-Verified": "true"},
-        json={"decision": "approved"},
+        json={"decision": "approved", "reason": "Reviewed simulated countermeasure evidence."},
     )
     assert response.status_code == 403
 
@@ -245,7 +245,7 @@ async def test_request_body_cannot_activate_mfa(tmp_path: Path) -> None:
     response = client.post(
         f"/api/v1/simulations/{run_id}/approval",
         headers={"Authorization": f"Bearer {token}"},
-        json={"decision": "approved", "mfa_satisfied": True},
+        json={"decision": "approved", "reason": "Reviewed simulated countermeasure evidence.", "mfa_satisfied": True},
     )
     assert response.status_code == 422
 
@@ -259,7 +259,7 @@ async def test_viewer_cannot_approve_even_with_verified_mfa(tmp_path: Path) -> N
     response = client.post(
         f"/api/v1/simulations/{run_id}/approval",
         headers={"Authorization": f"Bearer {viewer}"},
-        json={"decision": "approved"},
+        json={"decision": "approved", "reason": "Reviewed simulated countermeasure evidence."},
     )
     assert response.status_code == 403
 

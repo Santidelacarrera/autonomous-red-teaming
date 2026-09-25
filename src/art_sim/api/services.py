@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from hashlib import sha256
 from uuid import UUID
 
 from art_sim.domain.exceptions import ResultNotAvailableError
 from art_sim.platform.models import AuditEvent, SimulationRun, SimulationRunStatus
 from art_sim.platform.ports import OperationalStore
 from art_sim.remediation.models import ApprovalDecision
-from art_sim.worker.models import SimulationArtifacts
+from art_sim.worker.models import SimulationArtifacts, SimulationReview
 from art_sim.worker.ports import SimulationDispatcher
 
 
@@ -72,6 +73,38 @@ class SimulationService:
             await self._dispatcher.dispatch(persisted.run_id)
         return persisted, created
 
+    async def create_batch(
+        self,
+        scenario_ids: tuple[str, ...],
+        count: int,
+        actor: str,
+        idempotency_key: str,
+        request_id: str | None = None,
+    ) -> tuple[SimulationRun, ...]:
+        """Create a bounded set of independently durable, idempotent simulations."""
+        if not 1 <= count <= 10:
+            raise ValueError("Batch count must be between 1 and 10")
+        if not scenario_ids or len(scenario_ids) > 10:
+            raise ValueError("Batch requires one to ten configured scenarios")
+        if any(not self._scenarios.contains(item) for item in scenario_ids):
+            raise ValueError("Batch contains a scenario that is not configured")
+        if not 8 <= len(idempotency_key) <= 128:
+            raise ValueError("Batch idempotency key is invalid")
+        runs: list[SimulationRun] = []
+        for index in range(count):
+            scenario_id = scenario_ids[index % len(scenario_ids)]
+            item_key = sha256(
+                f"{idempotency_key}:{scenario_id}:{index}".encode()
+            ).hexdigest()
+            run, _ = await self.create(
+                scenario_id,
+                actor,
+                item_key,
+                request_id,
+            )
+            runs.append(run)
+        return tuple(runs)
+
     def scenarios(self) -> tuple[str, ...]:
         """Expose only controlled scenario identifiers to the API adapter."""
         return self._scenarios.list()
@@ -101,9 +134,15 @@ class ApprovalService:
         self._store = store
         self._dispatcher = dispatcher
 
-    async def decide(self, run_id: str, decision: ApprovalDecision, actor: str) -> SimulationRun:
+    async def decide(
+        self,
+        run_id: str,
+        decision: ApprovalDecision,
+        actor: str,
+        reason: str,
+    ) -> SimulationRun:
         """Commit exactly one decision through repository compare-and-set."""
-        run = await self._store.decide(UUID(run_id), decision, actor)
+        run = await self._store.decide(UUID(run_id), decision, actor, reason)
         if self._dispatcher is not None:
             await self._dispatcher.dispatch(run.run_id)
         return run
@@ -140,3 +179,17 @@ class SimulationResultService:
         if run.status is not SimulationRunStatus.SUCCEEDED:
             raise ResultNotAvailableError("Simulation result is not available")
         return await self._store.get_result(run_id)
+
+
+class SimulationReviewService:
+    """Expose the immutable pre-approval package without exposing workflow state."""
+
+    def __init__(self, store: OperationalStore) -> None:
+        self._store = store
+
+    async def get(self, run_id: UUID) -> SimulationReview:
+        """Return review evidence only after the worker persisted the review gate."""
+        run = await self._store.get_run(run_id)
+        if not run.review_ready:
+            raise ResultNotAvailableError("Simulation review is not available")
+        return await self._store.get_review(run_id)

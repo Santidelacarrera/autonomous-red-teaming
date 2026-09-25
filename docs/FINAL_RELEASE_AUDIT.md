@@ -51,13 +51,13 @@ telemetry backend and edge infrastructure. No vendor adapter is represented as c
 
 | Validation | Result | Evidence |
 | --- | --- | --- |
-| Backend | PASS | `.venv\Scripts\python.exe -m pytest -q`: 121 passed in 10.36 s |
-| Frontend | PASS | `npm test -- --run`: 19 passed across 7 files in 3.78 s |
+| Backend | PASS | `.venv\Scripts\python.exe -m pytest -q`: 122 passed in 12.19 s |
+| Frontend | PASS | `npm test -- --run`: 20 passed across 8 files in 4.49 s |
 | Frontend lint | PASS | `npm run lint` |
 | Frontend typecheck | PASS | `npm run typecheck` |
 | Frontend production build | PASS | `npm run build`: Vite built 36 modules |
 | Ruff | PASS | `.venv\Scripts\python.exe -m ruff check .` |
-| Mypy | PASS | `.venv\Scripts\python.exe -m mypy .`: 99 source files |
+| Mypy | PASS | `.venv\Scripts\python.exe -m mypy src tests`: 97 source files |
 | pip-audit | PASS | `.venv\Scripts\python.exe -m pip_audit -r requirements.lock`: no known vulnerabilities |
 | npm audit | PASS | `npm audit --audit-level=high`: 0 vulnerabilities |
 | Shadow E2E | PASS | `.venv\Scripts\python.exe scripts/run_e2e.py`: approved simulated plan and `succeeded` result |
@@ -73,7 +73,7 @@ telemetry backend and edge infrastructure. No vendor adapter is represented as c
 | Image scan | FAIL | Grype 0.119.0: 0 Critical, 50 High, 54 Medium, 9 Low, 44 Negligible; high threshold exited 2 |
 | Image SBOM | PASS | Syft 1.52.0, CycloneDX 1.7: 2,941 components, 0 unnamed, 2,941 `bom-ref` values |
 
-The focused 81-test run is a subset of the 121-test backend suite and is reported as
+The focused 81-test run is a subset of the 122-test backend suite and is reported as
 regression evidence, not as additional tests.
 
 ## Docker Validation
@@ -279,7 +279,7 @@ a connected backend. No production service was available or emulated as producti
 - All GitHub Actions were resolved to full commit SHAs. Human-readable versions remain in
   comments for controlled updates.
 - Failure injection and security/concurrency regressions remain covered by the passing
-  121-test backend baseline and the focused 81-test subset recorded above.
+  122-test backend baseline and the focused 81-test subset recorded above.
 - No deployment, migration, restore or external integration test was executed because no
   selected infrastructure or credentials were supplied.
 

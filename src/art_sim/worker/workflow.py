@@ -31,11 +31,12 @@ from art_sim.remediation.models import (
     VerificationResult,
 )
 from art_sim.remediation.normalization import RemediationPlanner
+from art_sim.remediation.preapproval import CountermeasurePreApprovalPolicy
 from art_sim.remediation.verification import RemediationVerifier
 from art_sim.reporting.markdown import MarkdownReportRenderer
 from art_sim.reporting.models import SecuritySimulationReport
 from art_sim.security.sanitizer import PromptInjectionSanitizer
-from art_sim.worker.models import SimulationArtifacts, SimulationScenario
+from art_sim.worker.models import SimulationArtifacts, SimulationReview, SimulationScenario
 from art_sim.worker.shadow import ShadowGraphRepository
 
 
@@ -54,12 +55,11 @@ class WorkflowOutcome(BaseModel):
 
     status: WorkflowOutcomeStatus
     artifacts: SimulationArtifacts | None = None
+    review: SimulationReview | None = None
 
 
 class DurableSimulationWorkflow:
     """Run and recover the existing LangGraph plus deterministic analysis pipeline."""
-
-    _APPROVAL_REASON = "Authorized API decision for a Shadow-only simulated remediation."
 
     def __init__(
         self,
@@ -75,6 +75,7 @@ class DurableSimulationWorkflow:
         self._remediation = RemediationPlanner()
         self._verifier = RemediationVerifier()
         self._artifact_agent = RemediationAgent(PolicyRemediationGenerator())
+        self._preapproval = CountermeasurePreApprovalPolicy()
         self._renderer = MarkdownReportRenderer()
 
     async def execute(
@@ -104,6 +105,29 @@ class DurableSimulationWorkflow:
         remediation_artifact = await self._artifact_agent.generate(
             RemediationRequest(plan=plan, simulation=simulation, target=target)
         )
+        verification_preview = self._verifier.verify(
+            scenario.graph,
+            scenario.source_asset_id,
+            remediation,
+        )
+        automated_preapproval = self._preapproval.evaluate(
+            remediation,
+            remediation_artifact,
+            verification_preview,
+        )
+        review = SimulationReview(
+            run_id=run.run_id,
+            scenario_id=run.scenario_id,
+            workflow_version=run.workflow_version,
+            graph_version=scenario.graph_version,
+            attack_path=path,
+            risk=assessment,
+            blast_radius=blast_radius,
+            remediation=remediation,
+            remediation_artifact=remediation_artifact,
+            verification_preview=verification_preview,
+            automated_preapproval=automated_preapproval,
+        )
 
         approval: ApprovalRecord | None = None
         if scenario.requires_approval:
@@ -129,10 +153,15 @@ class DurableSimulationWorkflow:
                     )
                 elif current.get("approval_status") is not ApprovalStatus.PENDING:
                     raise WorkerStateError("Approval checkpoint conflicts with operational state")
-                return WorkflowOutcome(status=WorkflowOutcomeStatus.WAITING_APPROVAL)
+                return WorkflowOutcome(
+                    status=WorkflowOutcomeStatus.WAITING_APPROVAL,
+                    review=review,
+                )
 
             if run.approval_actor is None:
                 raise ApprovalRequiredError("Recorded approval is missing its verified actor")
+            if run.approval_reason is None:
+                raise ApprovalRequiredError("Recorded approval is missing its review reason")
             decision = (
                 ApprovalDecision.APPROVED
                 if run.approval_status is ApprovalStatus.APPROVED
@@ -142,7 +171,7 @@ class DurableSimulationWorkflow:
                 run.run_id,
                 decision=decision,
                 operator=run.approval_actor,
-                reason=self._APPROVAL_REASON,
+                reason=run.approval_reason,
             )
             approval_value = final.get("approval_record")
             if not isinstance(approval_value, ApprovalRecord):
@@ -155,11 +184,7 @@ class DurableSimulationWorkflow:
                 raise WorkerStateError("Approval workflow did not produce verification")
             verification = verification_value
         else:
-            verification = self._verifier.verify(
-                scenario.graph,
-                scenario.source_asset_id,
-                remediation,
-            )
+            verification = verification_preview
 
         report_model = SecuritySimulationReport(
             run_id=run.run_id,

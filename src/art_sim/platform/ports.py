@@ -14,7 +14,7 @@ from art_sim.platform.models import (
     WorkflowCheckpoint,
 )
 from art_sim.remediation.models import ApprovalDecision
-from art_sim.worker.models import SimulationArtifacts
+from art_sim.worker.models import SimulationArtifacts, SimulationReview
 
 
 class OperationalStoreCapability(StrEnum):
@@ -57,7 +57,13 @@ class AuditRepository(Protocol):
 class ApprovalCoordinator(Protocol):
     """Atomically commit exactly one decision for a waiting run across workers."""
 
-    async def decide(self, run_id: UUID, decision: ApprovalDecision, actor: str) -> SimulationRun: ...
+    async def decide(
+        self,
+        run_id: UUID,
+        decision: ApprovalDecision,
+        actor: str,
+        reason: str = "Reviewed through a trusted internal coordinator.",
+    ) -> SimulationRun: ...
 
 
 class OperationalStore(Protocol):
@@ -84,7 +90,11 @@ class OperationalStore(Protocol):
     ) -> tuple[SimulationRun, ...]: ...
 
     async def decide(
-        self, run_id: UUID, decision: ApprovalDecision, actor: str
+        self,
+        run_id: UUID,
+        decision: ApprovalDecision,
+        actor: str,
+        reason: str = "Reviewed through a trusted internal coordinator.",
     ) -> SimulationRun: ...
 
     async def acquire_execution(
@@ -113,7 +123,11 @@ class OperationalStore(Protocol):
     ) -> None: ...
 
     async def mark_waiting_approval(
-        self, run_id: UUID, owner_id: str, fencing_token: int
+        self,
+        run_id: UUID,
+        owner_id: str,
+        fencing_token: int,
+        review: SimulationReview | None = None,
     ) -> SimulationRun: ...
 
     async def complete_execution(
@@ -137,6 +151,8 @@ class OperationalStore(Protocol):
     ) -> SimulationRun: ...
 
     async def get_result(self, run_id: UUID) -> SimulationArtifacts: ...
+
+    async def get_review(self, run_id: UUID) -> SimulationReview: ...
 
     async def append_event(self, event: AuditEvent) -> None: ...
 

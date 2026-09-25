@@ -53,10 +53,10 @@ base-image migration, but no approved risk disposition exists for the High findi
 
 | Check | Result |
 | --- | --- |
-| Backend Pytest | PASS — 121 tests |
-| Frontend Vitest | PASS — 19 tests in 7 files |
+| Backend Pytest | PASS — 122 tests |
+| Frontend Vitest | PASS — 20 tests in 8 files |
 | Ruff | PASS |
-| Mypy strict | PASS — 99 source files |
+| Mypy strict | PASS — 97 source files |
 | Frontend lint/typecheck/build | PASS |
 | `pip-audit -r requirements.lock` | PASS — no known vulnerabilities |
 | `npm audit --audit-level=high` | PASS — 0 vulnerabilities |

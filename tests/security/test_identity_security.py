@@ -191,7 +191,7 @@ async def test_mfa_policy_denies_standard_development_identity(tmp_path: Path) -
     response = client.post(
         f"/api/v1/simulations/{created.json()['run_id']}/approval",
         headers=operator,
-        json={"decision": "approved"},
+        json={"decision": "approved", "reason": "Reviewed simulated countermeasure evidence."},
     )
     assert response.status_code == 403
 

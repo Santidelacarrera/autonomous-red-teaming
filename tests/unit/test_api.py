@@ -78,11 +78,12 @@ async def test_approval_enforces_roles_and_durable_compare_and_set(tmp_path: Pat
     assert claim is not None
     await store.mark_waiting_approval(UUID(run_id), "api-test", claim.fencing_token)
     viewer = {"Authorization": "Bearer development:viewer:bob"}
-    assert client.post(f"/api/v1/simulations/{run_id}/approval", headers=viewer, json={"decision": "approved"}).status_code == 403
-    approved = client.post(f"/api/v1/simulations/{run_id}/approval", headers=operator, json={"decision": "approved"})
+    decision = {"decision": "approved", "reason": "Reviewed simulated countermeasure evidence."}
+    assert client.post(f"/api/v1/simulations/{run_id}/approval", headers=viewer, json=decision).status_code == 403
+    approved = client.post(f"/api/v1/simulations/{run_id}/approval", headers=operator, json=decision)
     assert approved.status_code == 200
     assert approved.json()["approval_status"] == "approved"
-    assert client.post(f"/api/v1/simulations/{run_id}/approval", headers=operator, json={"decision": "approved"}).status_code == 409
+    assert client.post(f"/api/v1/simulations/{run_id}/approval", headers=operator, json=decision).status_code == 409
 
 
 async def test_health_readiness_and_not_found_error_contract(tmp_path: Path) -> None:

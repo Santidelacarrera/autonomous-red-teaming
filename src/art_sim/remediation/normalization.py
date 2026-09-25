@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import ClassVar
+from uuid import NAMESPACE_URL, uuid5
 
 from art_sim.attack.risk import PathRiskAssessment
 from art_sim.domain.models import AttackPath, RelationshipType
@@ -35,7 +36,20 @@ class RemediationPlanner:
             if edge.relationship_type in {RelationshipType.IAM_ASSUME_ROLE, RelationshipType.ASSUMES_ROLE, RelationshipType.TRUSTS}
             else RemediationAction.DISABLE_RELATIONSHIP
         )
+        remediation_id = uuid5(
+            NAMESPACE_URL,
+            ":".join(
+                (
+                    "art-sim-remediation-v1",
+                    str(edge.source_asset_id),
+                    edge.relationship_type.value,
+                    str(edge.target_asset_id),
+                    action.value,
+                )
+            ),
+        )
         return NormalizedRemediation(
+            remediation_id=remediation_id,
             action=action,
             source_asset_id=edge.source_asset_id,
             target_asset_id=edge.target_asset_id,

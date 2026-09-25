@@ -2,7 +2,7 @@
 
 ```mermaid
 flowchart TD
-    API[FastAPI] --> SVC[SimulationService]
+    API[FastAPI single and bounded batch API] --> SVC[SimulationService]
     SVC --> STORE[Operational Store: run lease audit result]
     SVC --> DISPATCH[SimulationDispatcher]
     DISPATCH --> WORKER[SimulationWorker]
@@ -14,7 +14,9 @@ flowchart TD
     LG --> MOCK[Mock execution simulator]
     MOCK --> ANALYSIS[Risk and blast-radius analysis]
     ANALYSIS --> REM[Remediation proposal and review artifacts]
-    REM --> HITL[Durable HumanApprovalWorkflow]
+    REM --> REVIEW[Immutable countermeasure review package]
+    REVIEW --> PRE[Deterministic automated pre-approval]
+    PRE --> HITL[Durable HumanApprovalWorkflow]
     HITL --> VERIFY[In-memory simulated verification]
     VERIFY --> RESULT[Immutable artifacts and Markdown report]
     RESULT --> STORE
@@ -33,7 +35,7 @@ flowchart TD
 | `SimulatedAttackGraph` | Bounded BFS and copy-on-write relation what-if analysis. | In-memory only; has no repository or driver dependency. |
 | Risk / blast radius | Calculate deterministic score and reachability metrics. | Pure typed inputs; no persistence or network I/O. |
 | Remediation | Produces normalized, review-only JSON/HCL/Rego/Gatekeeper artifacts. | No apply command is present. GitHub publishing is a separately injected adapter. |
-| HITL / verification | Interrupts before decision; validates HMAC and lifecycle; verifies a graph copy. | `MemorySaver` by default, injected verifier; no real remediation is applied. |
+| HITL / verification | Persists the candidate, SHA-256 and simulated before/after evidence before decision; requires reviewer rationale; validates HMAC and lifecycle. | `MemorySaver` by default, injected verifier; no real remediation is applied. |
 | `platform` | Durable `SimulationRun`, portable checkpoints, append-only audit, approval compare-and-set, and health contracts. | SQLite WAL adapter runs short transactions through `asyncio.to_thread`; no secret values are persisted. |
 | `worker` | Claims durable work, resumes LangGraph checkpoints, executes deterministic Shadow analysis, and atomically commits terminal results. | Local dispatcher has process scope only; durable SQLite CAS and leases provide ownership. |
 | Reporting / telemetry | Renders Markdown and emits typed metrics/traces. | Process collectors are development-only; production requires an external adapter. |

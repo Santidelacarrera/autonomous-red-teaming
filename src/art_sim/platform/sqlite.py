@@ -23,7 +23,7 @@ from art_sim.platform.models import (
 )
 from art_sim.platform.ports import OperationalStoreCapability
 from art_sim.remediation.models import ApprovalDecision, ApprovalStatus
-from art_sim.worker.models import SimulationArtifacts
+from art_sim.worker.models import SimulationArtifacts, SimulationReview
 
 
 class CheckpointCorruptionError(GraphEngineError):
@@ -42,7 +42,7 @@ class SqliteOperationalStore:
     deployment requires a server database adapter implementing the same ports.
     """
 
-    _SCHEMA_VERSION = 2
+    _SCHEMA_VERSION = 3
     deployment_capability: ClassVar[OperationalStoreCapability] = (
         OperationalStoreCapability.SINGLE_NODE
     )
@@ -119,11 +119,25 @@ class SqliteOperationalStore:
         """Return audit events in append sequence order."""
         return await asyncio.to_thread(self._list_events_sync, run_id)
 
-    async def decide(self, run_id: UUID, decision: ApprovalDecision, actor: str) -> SimulationRun:
+    async def decide(
+        self,
+        run_id: UUID,
+        decision: ApprovalDecision,
+        actor: str,
+        reason: str = "Reviewed through a trusted internal coordinator.",
+    ) -> SimulationRun:
         """Use one SQLite transaction as distributed compare-and-set for a waiting run."""
         if not actor.strip():
             raise ApprovalRequiredError("Approval actor is required")
-        return await asyncio.to_thread(self._decide_sync, run_id, decision, actor)
+        if not 10 <= len(reason.strip()) <= 512:
+            raise ApprovalRequiredError("Approval reason must contain 10 to 512 characters")
+        return await asyncio.to_thread(
+            self._decide_sync,
+            run_id,
+            decision,
+            actor,
+            reason.strip(),
+        )
 
     async def acquire_execution(
         self,
@@ -186,6 +200,7 @@ class SqliteOperationalStore:
         run_id: UUID,
         owner_id: str,
         fencing_token: int,
+        review: SimulationReview | None = None,
     ) -> SimulationRun:
         """Persist the HITL boundary and relinquish execution ownership atomically."""
         return await asyncio.to_thread(
@@ -193,6 +208,7 @@ class SqliteOperationalStore:
             run_id,
             owner_id,
             fencing_token,
+            review,
         )
 
     async def complete_execution(
@@ -267,6 +283,10 @@ class SqliteOperationalStore:
         """Load one immutable final artifact bundle by run identifier."""
         return await asyncio.to_thread(self._get_result_sync, run_id)
 
+    async def get_review(self, run_id: UUID) -> SimulationReview:
+        """Load the immutable security-review package for a paused simulation."""
+        return await asyncio.to_thread(self._get_review_sync, run_id)
+
     def _connection(self) -> sqlite3.Connection:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(self._path, isolation_level=None, timeout=10.0)
@@ -307,6 +327,11 @@ class SqliteOperationalStore:
                 CREATE TABLE IF NOT EXISTS simulation_results (
                   run_id TEXT PRIMARY KEY, workflow_version TEXT NOT NULL,
                   payload TEXT NOT NULL, created_at TEXT NOT NULL,
+                  FOREIGN KEY(run_id) REFERENCES simulation_runs(run_id)
+                );
+                CREATE TABLE IF NOT EXISTS simulation_reviews (
+                  run_id TEXT PRIMARY KEY, workflow_version TEXT NOT NULL,
+                  payload TEXT NOT NULL, checksum TEXT NOT NULL, created_at TEXT NOT NULL,
                   FOREIGN KEY(run_id) REFERENCES simulation_runs(run_id)
                 );
                 """
@@ -440,7 +465,13 @@ class SqliteOperationalStore:
             rows = connection.execute("SELECT payload FROM audit_events WHERE run_id=? ORDER BY sequence", (str(run_id),)).fetchall()
         return tuple(AuditEvent.model_validate_json(str(row["payload"])) for row in rows)
 
-    def _decide_sync(self, run_id: UUID, decision: ApprovalDecision, actor: str) -> SimulationRun:
+    def _decide_sync(
+        self,
+        run_id: UUID,
+        decision: ApprovalDecision,
+        actor: str,
+        reason: str,
+    ) -> SimulationRun:
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute("SELECT payload,status,approval_status FROM simulation_runs WHERE run_id=?", (str(run_id),)).fetchone()
@@ -460,6 +491,7 @@ class SqliteOperationalStore:
                     "approval_status": approval_status,
                     "approval_timestamp": now,
                     "approval_actor": actor,
+                    "approval_reason": reason,
                     "status": status,
                     "updated_at": now,
                 }
@@ -657,6 +689,7 @@ class SqliteOperationalStore:
         run_id: UUID,
         owner_id: str,
         fencing_token: int,
+        review: SimulationReview | None,
     ) -> SimulationRun:
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -668,9 +701,36 @@ class SqliteOperationalStore:
                 else SimulationRunStatus.WAITING_APPROVAL
             )
             SimulationRunStateMachine.require(run.status, target)
+            if review is not None:
+                if (
+                    review.run_id != run_id
+                    or review.scenario_id != run.scenario_id
+                    or review.workflow_version != run.workflow_version
+                ):
+                    connection.rollback()
+                    raise OperationalStoreError(
+                        "Security review does not match its simulation run"
+                    )
+                review_payload = review.model_dump_json()
+                review_checksum = hashlib.sha256(
+                    review_payload.encode("utf-8")
+                ).hexdigest()
+                connection.execute(
+                    """INSERT INTO simulation_reviews(
+                           run_id,workflow_version,payload,checksum,created_at
+                       ) VALUES(?,?,?,?,?)""",
+                    (
+                        str(run_id),
+                        review.workflow_version,
+                        review_payload,
+                        review_checksum,
+                        review.generated_at.isoformat(),
+                    ),
+                )
             updated = run.model_copy(
                 update={
                     "status": target,
+                    "review_ready": review is not None,
                     "updated_at": now,
                 }
             )
@@ -931,6 +991,20 @@ class SqliteOperationalStore:
         if row is None:
             raise OperationalStoreError("Simulation result does not exist")
         return SimulationArtifacts.model_validate_json(str(row["payload"]))
+
+    def _get_review_sync(self, run_id: UUID) -> SimulationReview:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT payload,checksum FROM simulation_reviews WHERE run_id=?",
+                (str(run_id),),
+            ).fetchone()
+        if row is None:
+            raise OperationalStoreError("Simulation review does not exist")
+        payload = str(row["payload"])
+        expected = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        if not hmac.compare_digest(expected, str(row["checksum"])):
+            raise OperationalStoreError("Simulation review integrity check failed")
+        return SimulationReview.model_validate_json(payload)
 
     def _owned_run(
         self,

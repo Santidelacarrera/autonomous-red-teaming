@@ -47,6 +47,8 @@ class SimulationRun(BaseModel):
     approval_status: ApprovalStatus = ApprovalStatus.PENDING
     approval_timestamp: datetime | None = None
     approval_actor: str | None = Field(default=None, max_length=128)
+    approval_reason: str | None = Field(default=None, min_length=10, max_length=512)
+    review_ready: bool = False
     verification_status: VerificationStatus = VerificationStatus.NOT_RUN
     artifacts: tuple[str, ...] = Field(default_factory=tuple, max_length=32)
     error_code: str | None = Field(default=None, pattern=r"^[A-Z][A-Z0-9_]{1,63}$")

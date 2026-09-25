@@ -15,6 +15,7 @@ from art_sim.api.services import (
     CancellationService,
     ScenarioCatalog,
     SimulationResultService,
+    SimulationReviewService,
     SimulationService,
 )
 from art_sim.domain.exceptions import ConfigurationError
@@ -192,5 +193,6 @@ def create_production_app(
         rate_limiter=rate_limiter,
         security_audit=security_audit,
         result_service=SimulationResultService(store),
+        review_service=SimulationReviewService(store),
         cancellation_service=CancellationService(store, dispatcher),
     )

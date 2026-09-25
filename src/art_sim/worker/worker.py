@@ -183,10 +183,15 @@ class SimulationWorker:
             if current.cancellation_requested:
                 return await self._cancel(claim, tracer)
             if outcome.status is WorkflowOutcomeStatus.WAITING_APPROVAL:
+                if outcome.review is None:
+                    raise WorkerStateError(
+                        "Approval workflow returned no security review package"
+                    )
                 waiting = await self._store.mark_waiting_approval(
                     job.run_id,
                     self._owner_id,
                     claim.fencing_token,
+                    outcome.review,
                 )
                 if waiting.status is SimulationRunStatus.CANCELLED:
                     await self._metric("simulation_rejected_total", 1.0, tracer)

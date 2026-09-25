@@ -13,6 +13,7 @@ from art_sim.blast_radius.calculator import BlastRadiusResult
 from art_sim.domain.models import AttackPath, Environment
 from art_sim.remediation.models import (
     ApprovalRecord,
+    AutomatedPreApproval,
     NormalizedRemediation,
     RemediationArtifact,
     VerificationResult,
@@ -38,6 +39,25 @@ class SimulationScenario(BaseModel):
         if any(asset.environment is not Environment.SHADOW for asset in self.graph.assets):
             raise ValueError("Simulation scenarios may contain only Shadow assets")
         return self
+
+
+class SimulationReview(BaseModel):
+    """Immutable evidence package a security reviewer must inspect before approval."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    run_id: UUID
+    scenario_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,127}$")
+    workflow_version: str = Field(min_length=1, max_length=64)
+    graph_version: str = Field(min_length=1, max_length=128)
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    attack_path: AttackPath
+    risk: PathRiskAssessment
+    blast_radius: BlastRadiusResult
+    remediation: NormalizedRemediation
+    remediation_artifact: RemediationArtifact
+    verification_preview: VerificationResult
+    automated_preapproval: AutomatedPreApproval
 
 
 class SimulationArtifacts(BaseModel):

@@ -60,6 +60,8 @@ export interface SimulationRun {
   approval_status: "pending" | "approved" | "rejected";
   approval_timestamp: string | null;
   approval_actor: string | null;
+  approval_reason: string | null;
+  review_ready: boolean;
   verification_status: "verified" | "partially_verified" | "failed" | "not_run";
   artifacts: string[];
   error_code: string | null;
@@ -83,3 +85,38 @@ export interface ApiEnvelopeError {
 export interface Page<T> { items: T[]; limit: number; offset: number; }
 
 export interface Scenario { scenario_id: string; }
+
+export interface SimulationReview {
+  run_id: string;
+  generated_at: string;
+  risk: { score: number };
+  remediation: {
+    action: string;
+    relationship_type: string;
+    reason: string;
+    expected_risk_reduction: number;
+  };
+  remediation_artifact: {
+    remediation_kind: string;
+    file_path: string;
+    content: string;
+    summary: string;
+    idempotency_key: string;
+    content_sha256: string;
+  };
+  verification_preview: {
+    status: "verified" | "partially_verified" | "failed" | "not_run";
+    paths_removed: number;
+    remaining_paths: number;
+    risk_before: number;
+    risk_after: number;
+    risk_reduction: number;
+  };
+  automated_preapproval: {
+    status: "recommended_for_human_approval" | "blocked";
+    evaluated_at: string;
+    checks: Record<string, boolean>;
+    summary: string;
+    requires_human_approval: true;
+  };
+}

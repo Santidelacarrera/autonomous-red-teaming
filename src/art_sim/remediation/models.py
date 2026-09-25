@@ -64,6 +64,13 @@ class VerificationStatus(StrEnum):
     NOT_RUN = "not_run"
 
 
+class PreApprovalStatus(StrEnum):
+    """Machine recommendation that never replaces the human approval decision."""
+
+    RECOMMENDED = "recommended_for_human_approval"
+    BLOCKED = "blocked"
+
+
 class NormalizedRemediation(BaseModel):
     """Intermediate, reviewable remediation representation independent of output format."""
 
@@ -117,6 +124,18 @@ class VerificationResult(BaseModel):
     risk_reduction: float = Field(ge=0.0, le=100.0)
     blast_radius_before: BlastRadiusResult
     blast_radius_after: BlastRadiusResult
+
+
+class AutomatedPreApproval(BaseModel):
+    """Deterministic safety checks attached to a human-review package."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: PreApprovalStatus
+    evaluated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    checks: dict[str, bool] = Field(min_length=5, max_length=10)
+    summary: str = Field(min_length=1, max_length=512)
+    requires_human_approval: bool = True
 
 
 class RemediationPrompt(BaseModel):

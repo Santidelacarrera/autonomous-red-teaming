@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { SimulationApi } from "../api/simulations";
 import type {
   SimulationLifecycleEvent,
+  SimulationReview,
   SimulationRun,
   SimulationStatus,
 } from "../api/types";
@@ -97,10 +98,10 @@ export function SimulationDetailPage({
     };
   }, [refresh]);
 
-  const decide = async (decision: "approved" | "rejected"): Promise<void> => {
+  const decide = async (decision: "approved" | "rejected", reason: string): Promise<void> => {
     setActionError(null);
     try {
-      setRun(await api.decide(runId, decision));
+      setRun(await api.decide(runId, decision, reason));
     } catch (reason: unknown) {
       setActionError(reason);
     }
@@ -148,7 +149,7 @@ export function SimulationDetailPage({
         : tab === "risk"
           ? <RiskCard before={risk?.risk_before ?? null} after={risk?.risk_after ?? null} />
           : tab === "approval"
-            ? <Approval run={run} canApprove={canApprove} error={actionError} onDecision={decide} />
+            ? <Approval api={api} run={run} canApprove={canApprove} error={actionError} onDecision={decide} />
             : <ResultPanel api={api} runId={runId} section={tab} />}
     </Panel>
   </>;
@@ -190,28 +191,71 @@ function Overview({
 }
 
 function Approval({
+  api,
   run,
   canApprove,
   error,
   onDecision,
 }: {
+  readonly api: SimulationApi;
   readonly run: SimulationRun;
   readonly canApprove: boolean;
   readonly error: unknown;
-  readonly onDecision: (decision: "approved" | "rejected") => Promise<void>;
+  readonly onDecision: (decision: "approved" | "rejected", reason: string) => Promise<void>;
 }) {
+  const [reason, setReason] = useState("");
+  const [review, setReview] = useState<SimulationReview | null>(null);
+  const [reviewError, setReviewError] = useState<unknown>(null);
   const pending = run.status === "waiting_approval" && run.approval_status === "pending";
+  useEffect(() => {
+    let active = true;
+    if (!run.review_ready) return () => { active = false; };
+    void api.review(run.run_id)
+      .then((value) => {
+        if (active) {
+          setReview(value);
+          setReviewError(null);
+        }
+      })
+      .catch((failure: unknown) => {
+        if (active) setReviewError(failure);
+      });
+    return () => { active = false; };
+  }, [api, run.review_ready, run.run_id]);
+  const decisionReady = review?.automated_preapproval.status === "recommended_for_human_approval" && reason.trim().length >= 10;
   return <div className="approval">
     <span className="proposal-label">SIMULATED REMEDIATION · HUMAN REVIEW GATE</span>
     <h3>{run.approval_status}</h3>
-    <p>Approval only controls the simulated workflow. It cannot apply, deploy, or modify infrastructure.</p>
+    <p>Review the generated countermeasure and its simulated effect. Approval cannot apply, deploy, or modify infrastructure.</p>
+    {reviewError ? <ErrorState error={reviewError} /> : null}
+    {run.review_ready && review === null && !reviewError ? <LoadingState /> : null}
+    {review ? <div className="review-package">
+      <p><strong>Automated pre-approval: {review.automated_preapproval.status.replaceAll("_", " ")}</strong></p>
+      <p>{review.automated_preapproval.summary}</p>
+      <dl className="metadata">
+        <div><dt>Action</dt><dd>{review.remediation.action}</dd></div>
+        <div><dt>Relationship</dt><dd>{review.remediation.relationship_type}</dd></div>
+        <div><dt>Risk</dt><dd>{review.verification_preview.risk_before} → {review.verification_preview.risk_after}</dd></div>
+        <div><dt>Path result</dt><dd>{review.verification_preview.paths_removed} removed · {review.verification_preview.remaining_paths} remaining</dd></div>
+        <div><dt>Candidate file</dt><dd><code>{review.remediation_artifact.file_path}</code></dd></div>
+        <div><dt>SHA-256</dt><dd><code>{review.remediation_artifact.content_sha256}</code></dd></div>
+      </dl>
+      <p>{review.remediation_artifact.summary}</p>
+      <pre>{review.remediation_artifact.content}</pre>
+    </div> : null}
     {run.approval_timestamp ? <p>Decision recorded {formatTimestamp(run.approval_timestamp)}.</p> : null}
+    {run.approval_reason ? <p>Reviewer rationale: {run.approval_reason}</p> : null}
     {error ? <ErrorState error={error} /> : null}
     {pending && canApprove
-      ? <div className="decision-actions">
-        <button className="primary-button" onClick={() => void onDecision("approved")}>Approve simulated workflow</button>
-        <button className="danger-button" onClick={() => void onDecision("rejected")}>Reject proposal</button>
-      </div>
+      ? <>
+        <label className="review-reason">Cybersecurity review rationale
+          <textarea value={reason} minLength={10} maxLength={512} onChange={(event) => setReason(event.target.value)} placeholder="Explain why this countermeasure should be approved or rejected." />
+        </label>
+        <div className="decision-actions">
+          <button className="primary-button" disabled={!decisionReady} onClick={() => void onDecision("approved", reason.trim())}>Approve simulated workflow</button>
+          <button className="danger-button" disabled={!decisionReady} onClick={() => void onDecision("rejected", reason.trim())}>Reject proposal</button>
+        </div>
+      </>
       : <p className="permission-note">{pending ? "Your verified identity cannot approve this workflow." : "No pending approval is available for this run."}</p>}
   </div>;
 }

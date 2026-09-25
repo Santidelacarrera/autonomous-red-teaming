@@ -4,10 +4,10 @@
 
 | Suite | Command | Result |
 | --- | --- | --- |
-| Backend | `.\.venv\Scripts\python.exe -m pytest -q` | PASS — 121 |
+| Backend | `.\.venv\Scripts\python.exe -m pytest -q` | PASS — 122 |
 | Ruff | `.\.venv\Scripts\python.exe -m ruff check .` | PASS |
-| Mypy strict | `.\.venv\Scripts\python.exe -m mypy .` | PASS — 99 files |
-| Frontend | `npm test -- --run` | PASS — 19 tests / 7 files |
+| Mypy strict | `.\.venv\Scripts\python.exe -m mypy .` | PASS — 97 files |
+| Frontend | `npm test -- --run` | PASS — 20 tests / 8 files |
 | Frontend lint | `npm run lint` | PASS |
 | Frontend typecheck | `npm run typecheck` | PASS |
 | Frontend build | `npm run build` | PASS |

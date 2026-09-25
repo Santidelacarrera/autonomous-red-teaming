@@ -14,6 +14,7 @@ from art_sim.api.services import (
     CancellationService,
     ScenarioCatalog,
     SimulationResultService,
+    SimulationReviewService,
     SimulationService,
 )
 from art_sim.platform.checkpoint import sqlite_langgraph_checkpointer
@@ -70,6 +71,7 @@ async def _client(
         rate_limiter=InMemoryRateLimiter(),
         security_audit=audit,
         result_service=SimulationResultService(store),
+        review_service=SimulationReviewService(store),
         cancellation_service=CancellationService(store, dispatcher),
     )
     return TestClient(app), store, dispatcher, audit
@@ -131,6 +133,48 @@ async def test_api_worker_shadow_e2e_persists_and_serves_every_result(tmp_path: 
     assert "# Security Simulation Report" in report["content"]
 
 
+async def test_api_accepts_bounded_idempotent_batches_of_five_and_ten(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "api-batches.sqlite3"
+    scenario = shadow_demo_scenario()
+    client, store, dispatcher, _ = await _client(database, scenario)
+
+    created_ids: set[str] = set()
+    for count in (5, 10):
+        response = client.post(
+            "/api/v1/simulations/batch",
+            headers={**_headers(), "Idempotency-Key": f"batch-{count}-stable-key"},
+            json={"scenario_ids": [scenario.scenario_id], "count": count},
+        )
+        assert response.status_code == 202, response.text
+        body = response.json()
+        assert body["count"] == count
+        item_ids = {item["run_id"] for item in body["items"]}
+        assert len(item_ids) == count
+        assert created_ids.isdisjoint(item_ids)
+        created_ids.update(item_ids)
+
+    assert len(created_ids) == 15
+    assert len(dispatcher.submitted) == 15
+    assert len(await store.list_runs(limit=20)) == 15
+    replay = client.post(
+        "/api/v1/simulations/batch",
+        headers={**_headers(), "Idempotency-Key": "batch-10-stable-key"},
+        json={"scenario_ids": [scenario.scenario_id], "count": 10},
+    )
+    assert replay.status_code == 202
+    assert {item["run_id"] for item in replay.json()["items"]} <= created_ids
+    assert len(dispatcher.submitted) == 15
+    assert len(await store.list_runs(limit=20)) == 15
+    too_large = client.post(
+        "/api/v1/simulations/batch",
+        headers={**_headers(), "Idempotency-Key": "batch-too-large"},
+        json={"scenario_ids": [scenario.scenario_id], "count": 11},
+    )
+    assert too_large.status_code == 422
+
+
 async def test_result_endpoints_return_409_during_created_running_and_waiting(
     tmp_path: Path,
 ) -> None:
@@ -150,6 +194,15 @@ async def test_result_endpoints_return_409_during_created_running_and_waiting(
     assert client.get(f"/api/v1/simulations/{run_id}/risk", headers=_headers()).status_code == 409
     await store.mark_waiting_approval(run_id, "probe", claim.fencing_token)
     assert client.get(f"/api/v1/simulations/{run_id}/risk", headers=_headers()).status_code == 409
+    blind_approval = client.post(
+        f"/api/v1/simulations/{run_id}/approval",
+        headers=_headers(),
+        json={
+            "decision": "approved",
+            "reason": "Attempted review without persisted evidence.",
+        },
+    )
+    assert blind_approval.status_code == 409
 
 
 async def test_api_hitl_approval_restart_resume_hmac_cas_and_audit(tmp_path: Path) -> None:
@@ -165,18 +218,34 @@ async def test_api_hitl_approval_restart_resume_hmac_cas_and_audit(tmp_path: Pat
     first, _ = await _worker(database, store, scenario, "before-restart")
     assert first is WorkerRunResult.WAITING_APPROVAL
 
+    review = client.get(
+        f"/api/v1/simulations/{run_id}/review",
+        headers=_headers(),
+    )
+    assert review.status_code == 200
+    review_body = review.json()
+    assert review_body["remediation_artifact"]["content_sha256"]
+    assert review_body["verification_preview"]["risk_after"] == 0.0
+    assert review_body["verification_preview"]["paths_removed"] == 1
+    assert (
+        review_body["automated_preapproval"]["status"]
+        == "recommended_for_human_approval"
+    )
+    assert review_body["automated_preapproval"]["requires_human_approval"] is True
+
     approved = client.post(
         f"/api/v1/simulations/{run_id}/approval",
         headers=_headers(),
-        json={"decision": "approved"},
+        json={"decision": "approved", "reason": "Reviewed simulated countermeasure evidence."},
     )
     assert approved.status_code == 200
     assert approved.json()["status"] == "resuming"
+    assert approved.json()["approval_reason"] == "Reviewed simulated countermeasure evidence."
     assert dispatcher.submitted[-1] == run_id
     replay = client.post(
         f"/api/v1/simulations/{run_id}/approval",
         headers=_headers(),
-        json={"decision": "approved"},
+        json={"decision": "approved", "reason": "Attempted duplicate approval decision."},
     )
     assert replay.status_code == 409
 
@@ -206,7 +275,7 @@ async def test_api_hitl_rejection_after_restart_is_terminal(tmp_path: Path) -> N
     rejected = client.post(
         f"/api/v1/simulations/{run_id}/approval",
         headers=_headers(),
-        json={"decision": "rejected"},
+        json={"decision": "rejected", "reason": "Countermeasure requires additional review."},
     )
     assert rejected.status_code == 200
     final, _ = await _worker(database, store, scenario, "after-reject")

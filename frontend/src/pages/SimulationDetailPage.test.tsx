@@ -23,6 +23,8 @@ const baseRun: SimulationRun = {
   approval_status: "pending",
   approval_timestamp: null,
   approval_actor: null,
+  approval_reason: null,
+  review_ready: false,
   verification_status: "not_run",
   artifacts: [],
   error_code: null,
@@ -40,6 +42,46 @@ function apiFor(value: SimulationRun) {
     get: vi.fn().mockResolvedValue(value),
     risk: vi.fn().mockResolvedValue({ risk_before: 70, risk_after: 0, risk_delta: 70 }),
     decide: vi.fn().mockResolvedValue(run("resuming", { approval_status: "approved" })),
+    review: vi.fn().mockResolvedValue({
+      run_id: baseRun.run_id,
+      generated_at: "2026-01-01T00:00:00Z",
+      risk: { score: 70 },
+      remediation: {
+        action: "restrict_trust",
+        relationship_type: "assumes_role",
+        reason: "Break the simulated path.",
+        expected_risk_reduction: 70,
+      },
+      remediation_artifact: {
+        remediation_kind: "aws_iam_policy",
+        file_path: "aws/iam-policies/candidate.json",
+        content: "{\"Effect\":\"Deny\"}",
+        summary: "Review-only IAM countermeasure.",
+        idempotency_key: "a".repeat(64),
+        content_sha256: "b".repeat(64),
+      },
+      verification_preview: {
+        status: "verified",
+        paths_removed: 1,
+        remaining_paths: 0,
+        risk_before: 70,
+        risk_after: 0,
+        risk_reduction: 70,
+      },
+      automated_preapproval: {
+        status: "recommended_for_human_approval",
+        evaluated_at: "2026-01-01T00:00:00Z",
+        checks: {
+          simulation_only: true,
+          artifact_integrity_valid: true,
+          verification_succeeded: true,
+          risk_reduced: true,
+          attack_path_removed: true,
+        },
+        summary: "Automated controls passed; human approval is still required.",
+        requires_human_approval: true,
+      },
+    }),
     cancel: vi.fn().mockResolvedValue(run("cancelled", { cancellation_requested: true })),
     events: vi.fn().mockResolvedValue({ items: [] }),
     result: vi.fn().mockResolvedValue({ items: [{ path: "persisted" }] }),
@@ -69,11 +111,23 @@ describe("SimulationDetailPage durable lifecycle", () => {
   });
 
   it("shows approval controls only for a waiting authorized operator", async () => {
-    const api = apiFor(run("waiting_approval"));
+    const api = apiFor(run("waiting_approval", { review_ready: true }));
     render(<SimulationDetailPage api={api as unknown as SimulationApi} runId={baseRun.run_id} canApprove onBack={vi.fn()} />);
     await screen.findByText(baseRun.run_id);
     fireEvent.click(screen.getByRole("tab", { name: "Approval" }));
-    expect(screen.getByRole("button", { name: "Approve simulated workflow" })).toBeInTheDocument();
+    expect(await screen.findByText("Review-only IAM countermeasure.")).toBeInTheDocument();
+    const approve = screen.getByRole("button", { name: "Approve simulated workflow" });
+    expect(approve).toBeDisabled();
+    fireEvent.change(screen.getByRole("textbox", { name: "Cybersecurity review rationale" }), {
+      target: { value: "Reviewed by the cybersecurity owner." },
+    });
+    expect(approve).toBeEnabled();
+    fireEvent.click(approve);
+    await waitFor(() => expect(api.decide).toHaveBeenCalledWith(
+      baseRun.run_id,
+      "approved",
+      "Reviewed by the cybersecurity owner.",
+    ));
   });
 
   it("loads persisted risk and selected result after SUCCEEDED", async () => {
