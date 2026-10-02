@@ -6,7 +6,7 @@ The platform remains `SIMULATION-ONLY`. The application contracts and fail-close
 composition are implemented, while mandatory production services are deployment-owned
 and are not represented as connected. Overall status:
 
-`NOT READY — pending external infrastructure only`
+`NOT READY — pending external infrastructure only` (validated end-to-end: the production composition starts in a hardened container with PostgreSQL, Redis broker, rate limiter, mounted secrets, durable audit and OTLP telemetry all reporting ready; only a live OIDC tenant is required for full readiness)
 
 Reason: every application-side adapter now has a concrete implementation (Redis limiter,
 Redis Streams broker, PostgreSQL store, OTLP telemetry, durable audit, mounted secrets),
@@ -47,7 +47,7 @@ repository. The container image scan passes the `high` gate (0 fixable High/Crit
 | Container image SBOM | VALIDATED | Syft 1.52.0 CycloneDX 1.7, 2,941 named components and 2,941 `bom-ref` values | No | 2026-09-24 |
 | Container vulnerability scan | VALIDATED | Grype 0.119.0: 0 fixable High/Critical after runtime `apt-get upgrade`; only-fixed gate passes | Documented disposition in .grype.yaml | 2026-10-02 |
 | Signed provenance | READY WITH EXTERNAL DEPENDENCY | commit-pinned GitHub artifact-attestation step configured for pushes | Hosted workflow identity and retained attestation | 2026-09-24 |
-| Deployment automation | NOT IMPLEMENTED | no cloud/Kubernetes/Compose production manifest or apply workflow | Selected platform and operator approval | 2026-09-24 |
+| Deployment automation | IMPLEMENTED | Helm chart (lint+template+hardening-asserted) + docker-compose.prod; production composition root `art_sim.api.serve` | Target cluster/registry | 2026-10-02 |
 | Backup/restore drill | READY WITH EXTERNAL DEPENDENCY | controlled procedure documented, not executed server-side | Server database, broker and audit backends | 2026-09-24 |
 | Multi-region | NOT IMPLEMENTED | no coordination adapter or test environment | Region topology and external services | 2026-09-24 |
 

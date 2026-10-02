@@ -16,7 +16,7 @@
   <img alt="FastAPI" src="https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white">
   <img alt="LangGraph" src="https://img.shields.io/badge/workflow-LangGraph-1C3C3C">
   <img alt="React" src="https://img.shields.io/badge/UI-React%20%2B%20Vite-61DAFB?logo=react&logoColor=black">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-258%20backend%20%2F%2020%20frontend-success">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-261%20backend%20%2F%2020%20frontend-success">
   <img alt="Type checked" src="https://img.shields.io/badge/mypy-strict-blue">
   <img alt="Security" src="https://img.shields.io/badge/security-bandit%20%7C%20pip--audit%20%7C%20gitleaks%20%7C%20grype-critical">
   <img alt="Container scan" src="https://img.shields.io/badge/image%20scan-0%20fixable%20high-success">
@@ -344,10 +344,22 @@ Internet
   -> Secret Manager + OIDC + Distributed Rate Limiter + SIEM + OpenTelemetry
 ```
 
-Every component after the application image is an external dependency. The repository
-does not deploy it. Production requires migrations before traffic, readiness gating,
-graceful drain, backup/restore verification, rollback to a compatible image/schema, and
-separate worker/API scaling. See [deployment](docs/deployment.md).
+The production ASGI entrypoint is `art_sim.api.serve`, which builds the fail-closed app from
+the real adapters via the composition root `art_sim.api.compose.build_production_app()`.
+
+- **Kubernetes:** a Helm chart under [`deploy/helm/art-sim`](deploy/helm/art-sim) deploys the
+  hardened image (non-root, read-only rootfs, dropped capabilities, seccomp), `/health` and
+  `/readiness` probes, an HPA, a PodDisruptionBudget, a restrictive NetworkPolicy, and a
+  projected secret volume. `helm lint` and `helm template` pass.
+- **Compose:** [`docker-compose.prod.yml`](docker-compose.prod.yml) runs the production app
+  wired to PostgreSQL, Redis (broker + limiter) and an OTLP collector. Validated end-to-end:
+  the container starts and `/readiness` reports `database`, `broker`, `secret_provider`,
+  `rate_limiter`, `audit` and `telemetry` all `ok` — only `identity_provider` needs a live
+  OIDC tenant.
+
+Every vendor service behind the application image is a deployment-owned dependency. Production
+still requires readiness gating, graceful drain, backup/restore verification, rollback to a
+compatible image/schema, and separate worker/API scaling. See [deployment](docs/deployment.md).
 
 ## 15. Observability
 
@@ -370,7 +382,7 @@ accepted work and close injected dependencies.
 ## 17. Testing
 
 The local audit executes unit, integration, security, concurrency, recovery,
-frontend and controlled Shadow E2E suites. The current verified count is **258 backend
+frontend and controlled Shadow E2E suites. The current verified count is **261 backend
 tests** and **20 frontend tests**; Ruff, strict Mypy (100 Python files), `bandit` (0
 findings), frontend lint/typecheck/build, `pip-audit`, and `npm audit` pass. The pinned Docker image builds,
 runs under the hardened invocation, passes local health/readiness and shuts down cleanly.

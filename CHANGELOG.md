@@ -112,3 +112,18 @@ All notable changes to this project are documented here. The format is based on
   postgres:16 service so these execute (not skip). Backend suite now 258 tests.
 - Every application-side production adapter now has a concrete implementation; production
   readiness is gated only by connecting them to live vendor services (deployment-owned).
+
+### Added (deployment + production composition — final mile)
+- Production composition root `art_sim.api.compose.build_production_app()` wires all six real
+  adapters (OIDC, PostgreSQL store, Redis Streams broker, Redis rate limiter, OTLP telemetry,
+  durable audit, mounted secrets) from env and passes create_production_app's fail-closed
+  capability contract; `art_sim.api.serve` is the production ASGI entrypoint.
+- Helm chart (deploy/helm/art-sim): hardened Deployment (non-root, read-only rootfs, drop ALL
+  caps, seccomp), probes, HPA, PodDisruptionBudget, NetworkPolicy, projected secret volume.
+  Validated with helm lint + helm template + rendered-manifest hardening assertions.
+- docker-compose.prod.yml + OTLP collector config: full production-like stack.
+- Verified END-TO-END: the production container starts and /readiness reports database,
+  broker, secret_provider, rate_limiter, audit and telemetry all `ok` (6/7 adapters live);
+  only identity_provider needs a real OIDC tenant. Grype gate still passes with the added
+  adapter dependencies (runtime lock now ships them, hash-pinned). Backend suite now 261 tests.
+- production-readiness: 'Deployment automation' now IMPLEMENTED.
