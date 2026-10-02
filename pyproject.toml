@@ -24,6 +24,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "bandit>=1.8",
     "mypy>=1.13",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
@@ -46,3 +47,8 @@ python_version = "3.11"
 strict = true
 warn_unused_ignores = true
 plugins = []
+
+[tool.bandit]
+# Static security analysis of first-party source only; tests exercise failure
+# paths and are excluded to keep signal high.
+exclude_dirs = ["tests", ".venv", "frontend"]

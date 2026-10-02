@@ -23,7 +23,7 @@ class SecretManagerProvider(StrEnum):
 
     AWS_SECRETS_MANAGER = "aws_secrets_manager"
     HASHICORP_VAULT = "hashicorp_vault"
-    GCP_SECRET_MANAGER = "gcp_secret_manager"
+    GCP_SECRET_MANAGER = "gcp_secret_manager"  # nosec B105 - provider name, not a credential
     AZURE_KEY_VAULT = "azure_key_vault"
 
 
