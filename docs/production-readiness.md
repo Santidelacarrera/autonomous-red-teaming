@@ -27,11 +27,11 @@ findings with one documented CPython pre-release disposition.
 | Server operational-store boundary | READY WITH EXTERNAL DEPENDENCY | protocol, configuration and rejection tests | Selected server database | 2026-09-24 |
 | PostgreSQL adapter and migrations | NOT IMPLEMENTED | no concrete pool/store or migration package | PostgreSQL service and integration environment | 2026-09-24 |
 | Secret-manager boundary | READY WITH EXTERNAL DEPENDENCY | async port, startup validation and redaction tests | Selected managed secret service | 2026-09-24 |
-| Concrete managed-secret adapter | NOT IMPLEMENTED | no AWS/Vault/GCP/Azure client adapter | Provider selection and workload identity | 2026-09-24 |
+| Concrete managed-secret adapter | IMPLEMENTED | `MountedSecretsProvider` (Docker/K8s mounted secrets, path-traversal-safe); tests | Mounted secret volume for deployment | 2026-10-02 |
 | Distributed rate-limit boundary | READY WITH EXTERNAL DEPENDENCY | port + process-adapter rejection tests | Selected shared limiter | 2026-09-24 |
 | Concrete distributed limiter | IMPLEMENTED | `RedisRateLimiter` (atomic Lua sliding window); 8 tests incl. concurrency/rollover via fakeredis | Live Redis for deployment | 2026-10-02 |
 | Durable audit boundary | READY WITH EXTERNAL DEPENDENCY | typed/redacted schema and retention contract tests | Selected SIEM/event store | 2026-09-24 |
-| Concrete durable audit adapter | NOT IMPLEMENTED | no SIEM/event-store client adapter | Audit backend and retention service | 2026-09-24 |
+| Concrete durable audit adapter | IMPLEMENTED | `JsonlDurableSecurityAuditSink` (append-only + fsync); tests | SIEM log shipper for deployment | 2026-10-02 |
 | External telemetry boundary | READY WITH EXTERNAL DEPENDENCY | typed metrics/traces and capability rejection tests | Selected OTLP/Prometheus backend | 2026-09-24 |
 | Concrete telemetry exporter | IMPLEMENTED | `OtlpTelemetrySink` (OpenTelemetry metrics+traces); 7 tests via in-memory OTel exporters | OTLP collector for deployment | 2026-10-02 |
 | Health and readiness | VALIDATED | live local API + multi-dependency failure tests | Real probes supplied by adapters | 2026-09-24 |

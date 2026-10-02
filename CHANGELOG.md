@@ -78,3 +78,14 @@ All notable changes to this project are documented here. The format is based on
   spans, not metric labels. 7 tests via in-memory OTel exporters (counter sum, histogram
   sum/count, span attributes, error status, health flush, backend-error mapping).
   production-readiness: 'Concrete telemetry exporter' now IMPLEMENTED. Backend suite now 217.
+
+### Added (production adapters)
+- `JsonlDurableSecurityAuditSink`: durable append-only (fsync) security-audit sink satisfying
+  `DurableSecurityAuditSink`; survives restarts; stores the same redacted typed events.
+- `MountedSecretsProvider`: external secret provider reading Docker/K8s mounted secrets, with
+  strict name validation and base-dir containment (path-traversal-safe), satisfying
+  `ExternalSecretProvider`. Both stdlib-only, opt-in, fully tested.
+- production-readiness: 'Concrete durable audit adapter' and 'Concrete managed-secret adapter'
+  now IMPLEMENTED. Backend suite now 239 tests.
+- Made the Redis adapter's EVAL typing stub-version-agnostic (await via Any) so mypy passes
+  under both the locked redis and newer local stubs.
