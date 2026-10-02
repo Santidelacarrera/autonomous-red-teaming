@@ -422,7 +422,10 @@ findings require remediation or formal review rather than being treated as unval
 
 Python ships a **hash-complete** runtime lockfile installed with `--require-hashes` (the
 image fails to build if any dependency is tampered with or a hash is missing), an exact
-development lockfile, and npm uses `package-lock.json`. CI runs
+development lockfile, and npm uses `package-lock.json`. [Dependabot](.github/dependabot.yml)
+keeps pip, npm, GitHub Actions and the base image patched weekly, [CodeQL](.github/workflows/codeql.yml)
+runs `security-extended` analysis on Python and TypeScript, and a [pre-commit](.pre-commit-config.yaml)
+config runs Ruff, Bandit, Gitleaks and private-key detection before code leaves a machine. CI runs
 Ruff, Mypy, Pytest, Bandit, frontend checks, `pip-audit`, `npm audit`, Gitleaks, wheel build,
 CycloneDX SBOM generation, SHA-256 evidence, container build and Anchore image scan.
 The release audit generated and validated local CycloneDX Python/frontend/image SBOMs plus
@@ -456,9 +459,11 @@ memory. Health and readiness returned 200 and SIGTERM exited 0. The runtime stag
 
 `.github/workflows/ci.yml` defines frontend lint/typecheck/test/build/audit, backend
 Ruff/Mypy/Pytest/audit/wheel, Gitleaks, SBOMs, artifact hashing, container build, image
-scanning and GitHub artifact attestation. Third-party Actions are commit-pinned. A workflow
-definition is not proof of a successful hosted run; verify the workflow and attestation
-before promoting an artifact.
+scanning and GitHub artifact attestation. A separate [`codeql.yml`](.github/workflows/codeql.yml)
+workflow runs `security-extended` static analysis on pushes, PRs and a weekly schedule, and
+[Dependabot](.github/dependabot.yml) opens grouped weekly dependency PRs. Third-party Actions
+are commit-pinned. A workflow definition is not proof of a successful hosted run; verify the
+workflow and attestation before promoting an artifact.
 
 ## 25. Failure Modes
 
