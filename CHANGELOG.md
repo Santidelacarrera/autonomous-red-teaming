@@ -70,3 +70,11 @@ All notable changes to this project are documented here. The format is based on
   whitespace could reach the planner). Backend suite now 210 tests.
 - Added on-demand mutation-testing config (`make mutation`, mutmut; Linux/WSL) targeting the
   security-critical modules so surviving mutants reveal weak test assertions.
+
+### Added (production adapter)
+- Second concrete production adapter: `OtlpTelemetrySink` for the external telemetry port
+  (`pip install .[telemetry]`). Maps the bounded metric vocabulary to OpenTelemetry
+  counters/histograms and agent executions to correlated spans; high-cardinality ids go on
+  spans, not metric labels. 7 tests via in-memory OTel exporters (counter sum, histogram
+  sum/count, span attributes, error status, health flush, backend-error mapping).
+  production-readiness: 'Concrete telemetry exporter' now IMPLEMENTED. Backend suite now 217.

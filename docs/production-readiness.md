@@ -33,7 +33,7 @@ findings with one documented CPython pre-release disposition.
 | Durable audit boundary | READY WITH EXTERNAL DEPENDENCY | typed/redacted schema and retention contract tests | Selected SIEM/event store | 2026-09-24 |
 | Concrete durable audit adapter | NOT IMPLEMENTED | no SIEM/event-store client adapter | Audit backend and retention service | 2026-09-24 |
 | External telemetry boundary | READY WITH EXTERNAL DEPENDENCY | typed metrics/traces and capability rejection tests | Selected OTLP/Prometheus backend | 2026-09-24 |
-| Concrete telemetry exporter | NOT IMPLEMENTED | no OTLP/Prometheus exporter composition | Collector/backend | 2026-09-24 |
+| Concrete telemetry exporter | IMPLEMENTED | `OtlpTelemetrySink` (OpenTelemetry metrics+traces); 7 tests via in-memory OTel exporters | OTLP collector for deployment | 2026-10-02 |
 | Health and readiness | VALIDATED | live local API + multi-dependency failure tests | Real probes supplied by adapters | 2026-09-24 |
 | TLS/API gateway/WAF | READY WITH EXTERNAL DEPENDENCY | production config validation + deployment contract | Edge infrastructure | 2026-09-24 |
 | Frontend | VALIDATED | 19 Vitest tests, lint, typecheck, build | Production OIDC client configuration | 2026-09-24 |
