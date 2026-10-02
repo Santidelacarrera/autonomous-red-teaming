@@ -34,3 +34,7 @@ All notable changes to this project are documented here. The format is based on
   pip-audit, npm audit, Gitleaks (full history, 0 leaks), and the Grype image gate all pass.
 - End-to-end Shadow pipeline validated against a live Neo4j instance: seed → recon → MITRE
   planning → simulation → human approval → verification, reducing simulated risk 51.0 → 0.0.
+
+### Confirmed (hosted)
+- GitHub Actions `ci`, `codeql`, and `scorecard` workflows pass on `main` (hosted runners),
+  including container build, Grype `high` gate, SBOMs, and build-provenance attestation.

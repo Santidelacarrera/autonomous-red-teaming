@@ -411,8 +411,10 @@ runtime, container health/readiness/SIGTERM and Syft image SBOM generation.
 
 ### Validated with external infrastructure
 
-None. No production vendor service or hosted attestation result was available to this
-audit.
+Hosted GitHub Actions: the `ci`, `codeql`, and `scorecard` workflows complete successfully
+on `main`, exercising the container build, Grype `high` gate, SBOMs, and the build-provenance
+attestation step on GitHub-hosted runners. No production vendor service (broker, database,
+secret manager, OIDC tenant, SIEM, telemetry) was connected; those remain deployment-owned.
 
 ### Ready with external dependency
 
@@ -478,8 +480,11 @@ Ruff/Mypy/Pytest/audit/wheel, Gitleaks, SBOMs, artifact hashing, container build
 scanning and GitHub artifact attestation. A separate [`codeql.yml`](.github/workflows/codeql.yml)
 workflow runs `security-extended` static analysis on pushes, PRs and a weekly schedule, and
 [Dependabot](.github/dependabot.yml) opens grouped weekly dependency PRs. Third-party Actions
-are commit-pinned. A workflow definition is not proof of a successful hosted run; verify the
-workflow and attestation before promoting an artifact.
+are commit-pinned. The hosted pipeline is **green on GitHub Actions** for `main` — `ci`,
+`codeql`, and `scorecard` all complete successfully, including the container build, the Grype
+`high` gate, SBOM generation, and the build-provenance attestation step. Independent
+attestation *verification* (`gh attestation verify`) is still recommended before promoting a
+specific artifact.
 
 ## 25. Failure Modes
 
