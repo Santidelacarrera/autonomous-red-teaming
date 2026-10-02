@@ -23,7 +23,7 @@ All notable changes to this project are documented here. The format is based on
 - `docker-compose.yml` for a one-command hardened local stack (optional Neo4j under the
   `shadow` profile) and a `Makefile` task runner.
 - MIT `LICENSE` with a non-binding defensive-use notice.
-- `CONTRIBUTING.md`, this changelog, issue/PR templates, and `CODEOWNERS`.
+- `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, this changelog, issue/PR templates, `CODEOWNERS`, and `.editorconfig`.
 
 ### Changed
 - README elevated with badges, a 60-second quickstart, a verified-operational section, and
