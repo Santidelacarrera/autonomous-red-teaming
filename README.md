@@ -1,17 +1,81 @@
 # Autonomous Red Teaming & Attack Graph Simulator
 
+> **Defensive, human-gated Breach-and-Attack-Simulation (BAS) / Continuous Threat
+> Exposure Management (CTEM) platform.** It maps controlled cloud/Kubernetes-like assets
+> into a graph, bounds attack paths *before* AI planning, simulates MITRE ATT&CK-aligned
+> decisions, and proposes remediation that a human must approve — **nothing touches real
+> infrastructure.**
+
+<p>
+  <img alt="Python" src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776AB?logo=python&logoColor=white">
+  <img alt="FastAPI" src="https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white">
+  <img alt="LangGraph" src="https://img.shields.io/badge/workflow-LangGraph-1C3C3C">
+  <img alt="React" src="https://img.shields.io/badge/UI-React%20%2B%20Vite-61DAFB?logo=react&logoColor=black">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-122%20backend%20%2F%2020%20frontend-success">
+  <img alt="Type checked" src="https://img.shields.io/badge/mypy-strict-blue">
+  <img alt="Security" src="https://img.shields.io/badge/security-bandit%20%7C%20pip--audit%20%7C%20gitleaks%20%7C%20grype-critical">
+  <img alt="Scope" src="https://img.shields.io/badge/scope-simulation--only-orange">
+</p>
+
+**Audience:** security engineers, platform/SRE teams, architects, reviewers, and operators.
+
+**This project is *not*** an exploitation framework, a cloud control plane, a deployment
+engine, or an autonomous offensive tool. Production adapter *contracts* are present; vendor
+services are never represented as connected when they are not.
+
+---
+
+### ⚡ TL;DR — run the full pipeline in ~60 seconds
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.lock
+.\.venv\Scripts\python.exe -m pip install -e . --no-deps
+Copy-Item .env.example .env            # dev profile: header auth, SQLite, in-process worker
+.\.venv\Scripts\python.exe -m uvicorn art_sim.api.main:app --reload --port 8080
+```
+
+```bash
+# Smoke-test the human-gated lifecycle (dev bearer = "development:<role>:<subject>")
+curl -s localhost:8080/health
+curl -s -H "Authorization: Bearer development:operator:you" \
+     -H "Content-Type: application/json" -H "Idempotency-Key: demo-1" \
+     -d '{"scenario_id":"shadow-demo"}' localhost:8080/api/v1/simulations
+```
+
+The run advances `CREATED → RUNNING → WAITING_APPROVAL`, waits for a human decision, then
+`RESUMING → SUCCEEDED` with an immutable, verified evidence set. See [§6](#6-simulation-lifecycle).
+
+### ✅ Verified operational (last local audit)
+
+The end-to-end pipeline was executed against a live Neo4j AuraDB Shadow instance:
+
+| Stage | Result |
+| --- | --- |
+| `scripts/seed_db.py` | Shadow topology seeded (EKS → IAM role → crown-jewel DB) |
+| `scripts/run_e2e.py` | Recon → MITRE planning → simulation → remediation artifact generated |
+| API lifecycle | create → `waiting_approval` → human approve → `verified` → `succeeded` |
+| Risk reduction | **51.0 → 0.0** (the generated IAM `Deny` policy neutralizes the simulated path) |
+| Auth boundary | unauthenticated request correctly rejected (`401`) |
+
+> ⚠️ **Production status is intentionally `NOT READY`** — see [§20](#20-production-readiness).
+> The application boundaries are complete and tested, but external dependencies (broker,
+> server database, secret manager, OIDC tenant, SIEM, telemetry, TLS edge) are deployment-owned
+> and not connected, and the container image scan has unresolved High findings. This is a
+> deliberate, honest disclosure, not a defect.
+
 ## 1. Project Overview
 
-This repository implements a defensive BAS/CTEM simulation platform for security
-engineers, platform teams, architects, reviewers, and operators. It maps controlled
+This repository implements a defensive BAS/CTEM simulation platform. It maps controlled
 AWS/Kubernetes-like assets into a graph, bounds candidate paths before AI planning,
 simulates MITRE ATT&CK-aligned decisions, requires human approval for remediation
 proposals, verifies those proposals against an isolated model, and exposes evidence
 through an API and React command center.
 
-The project is not an exploitation framework, cloud control plane, deployment engine,
-or autonomous offensive tool. Production adapter contracts are present; vendor services
-are not represented as connected when they are not available.
+The design philosophy is **fail-closed, boundary-first, and honest about what is not
+connected**: every external capability (identity, secrets, broker, database, audit,
+telemetry, rate limiting) is a typed port with a production capability check, and the
+composition root refuses to start production with a development-grade adapter.
 
 ## 2. Security Boundary
 
@@ -137,8 +201,12 @@ subject and sensitive endpoint; production rejects process-local limiting.
 
 Secrets are referenced by name, resolved asynchronously at startup, length-validated,
 redacted, and excluded from API responses, jobs, audit and telemetry. HTTP controls
-include request-size limits, restrictive CORS, generic error envelopes, security headers,
-request correlation and production HSTS. See [security architecture](docs/security-architecture.md).
+include request-size limits, restrictive CORS, generic error envelopes, security headers
+(`Content-Security-Policy`, `X-Content-Type-Options`, `Referrer-Policy`, `X-Frame-Options`,
+`Permissions-Policy`), request correlation and production HSTS. The React command center
+ships a strict CSP injected into the production build (`default-src 'none'`, no inline
+scripts), while the dev server keeps HMR. Static analysis (`bandit`) runs on first-party
+Python in CI. See [security architecture](docs/security-architecture.md).
 
 ## 9. Persistence
 
@@ -281,10 +349,10 @@ accepted work and close injected dependencies.
 
 ## 17. Testing
 
-The Phase 14 local audit executes unit, integration, security, concurrency, recovery,
+The local audit executes unit, integration, security, concurrency, recovery,
 frontend and controlled Shadow E2E suites. The current verified count is **122 backend
-tests** and **20 frontend tests**; Ruff and strict Mypy (97 Python files), frontend
-lint/typecheck/build, `pip-audit`, and `npm audit` pass. The pinned Docker image builds,
+tests** and **20 frontend tests**; Ruff, strict Mypy (100 Python files), `bandit` (0
+findings), frontend lint/typecheck/build, `pip-audit`, and `npm audit` pass. The pinned Docker image builds,
 runs under the hardened invocation, passes local health/readiness and shuts down cleanly.
 The Grype image scan fails the configured `high` threshold, so the release is not ready
 for promotion. See [test matrix](docs/test-matrix.md).
@@ -345,7 +413,7 @@ findings require remediation or formal review rather than being treated as unval
 ## 22. Supply Chain Security
 
 Python has exact runtime and development lockfiles; npm uses `package-lock.json`. CI runs
-Ruff, Mypy, Pytest, frontend checks, `pip-audit`, `npm audit`, Gitleaks, wheel build,
+Ruff, Mypy, Pytest, Bandit, frontend checks, `pip-audit`, `npm audit`, Gitleaks, wheel build,
 CycloneDX SBOM generation, SHA-256 evidence, container build and Anchore image scan.
 The release audit generated and validated local CycloneDX Python/frontend/image SBOMs plus
 a SHA-256 manifest under ignored `var/audit/`. Grype 0.119.0 and Syft 1.52.0 are versioned
