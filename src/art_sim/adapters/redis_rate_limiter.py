@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import secrets
 import time
-from typing import ClassVar
+from collections.abc import Awaitable
+from typing import Any, ClassVar, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 from redis.asyncio import Redis
@@ -78,8 +79,19 @@ class RedisRateLimiter:
         member = f"{time.monotonic_ns()}-{secrets.token_hex(8)}"
         bucket = f"{self._settings.key_prefix}:{policy.name}:{key}"
         try:
-            result = await self._client.eval(
-                _SLIDING_WINDOW_LUA, 1, bucket, now_ms, window_ms, policy.requests, member
+            # redis types EVAL args as strings; Lua `tonumber` parses them back. The async
+            # client's return is typed as a sync/async union, so we cast to an awaitable.
+            result = await cast(
+                "Awaitable[Any]",
+                self._client.eval(
+                    _SLIDING_WINDOW_LUA,
+                    1,
+                    bucket,
+                    str(now_ms),
+                    str(window_ms),
+                    str(policy.requests),
+                    member,
+                ),
             )
         except RedisError as error:
             raise DependencyUnavailableError("Rate limiter backend is unavailable") from error
