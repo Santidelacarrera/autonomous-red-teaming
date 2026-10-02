@@ -54,3 +54,11 @@ All notable changes to this project are documented here. The format is based on
   holds across replicas. 8 tests (limit enforcement, independent keys/policies, window
   rollover, concurrency = exactly N allowed, backend-error mapping) using fakeredis[lua].
   Backend suite now 192 tests.
+
+### Added (simulation coverage)
+- Enriched the scenario catalog from 5 to 8 Shadow scenarios and completed the MITRE
+  technique mapping for every relationship type: CONTAINER_ESCAPE→T1611 (Escape to Host),
+  CREDENTIAL_ACCESS→T1552 (Unsecured Credentials), IAM_ASSUME_ROLE→T1548 (Abuse Elevation
+  Control), ACCESS→T1210 (Exploitation of Remote Services). New scenarios: container
+  breakout, IAM privilege chain, credential harvest. Verified end-to-end (succeeded +
+  verified) through the live API. Backend suite now 200 tests.

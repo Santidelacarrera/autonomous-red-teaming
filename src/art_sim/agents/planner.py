@@ -44,6 +44,32 @@ class MitrePathPlanner(AttackPlanner):
             MitreTechnique(technique_id="T1021", tactic="lateral_movement", name="Remote Services"),
             SimulationAction.SIMULATE_LATERAL_MOVEMENT,
         ),
+        RelationshipType.CONTAINER_ESCAPE: (
+            MitreTechnique(
+                technique_id="T1611", tactic="privilege_escalation", name="Escape to Host"
+            ),
+            SimulationAction.SIMULATE_CONTAINER_ESCAPE,
+        ),
+        RelationshipType.CREDENTIAL_ACCESS: (
+            MitreTechnique(
+                technique_id="T1552", tactic="credential_access", name="Unsecured Credentials"
+            ),
+            SimulationAction.SIMULATE_CREDENTIAL_ACCESS,
+        ),
+        RelationshipType.IAM_ASSUME_ROLE: (
+            MitreTechnique(
+                technique_id="T1548",
+                tactic="privilege_escalation",
+                name="Abuse Elevation Control Mechanism",
+            ),
+            SimulationAction.SIMULATE_ROLE_ASSUMPTION,
+        ),
+        RelationshipType.ACCESS: (
+            MitreTechnique(
+                technique_id="T1210", tactic="lateral_movement", name="Exploitation of Remote Services"
+            ),
+            SimulationAction.SIMULATE_LATERAL_MOVEMENT,
+        ),
     }
 
     async def create_plan(
