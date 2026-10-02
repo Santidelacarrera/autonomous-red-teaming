@@ -30,7 +30,7 @@ All notable changes to this project are documented here. The format is based on
   updated supply-chain / production-readiness status (NOT READY only pending external infra).
 
 ### Verified
-- 122 backend tests, 20 frontend tests, Ruff, strict Mypy (100 files), Bandit (0 findings),
+- 125 backend tests, 20 frontend tests, Ruff, strict Mypy (100 files), Bandit (0 findings),
   pip-audit, npm audit, Gitleaks (full history, 0 leaks), and the Grype image gate all pass.
 - End-to-end Shadow pipeline validated against a live Neo4j instance: seed → recon → MITRE
   planning → simulation → human approval → verification, reducing simulated risk 51.0 → 0.0.
