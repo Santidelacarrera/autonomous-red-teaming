@@ -30,7 +30,7 @@ All notable changes to this project are documented here. The format is based on
   updated supply-chain / production-readiness status (NOT READY only pending external infra).
 
 ### Verified
-- 125 backend tests, 20 frontend tests, Ruff, strict Mypy (100 files), Bandit (0 findings),
+- 158 backend tests, 20 frontend tests, Ruff, strict Mypy (100 files), Bandit (0 findings),
   pip-audit, npm audit, Gitleaks (full history, 0 leaks), and the Grype image gate all pass.
 - End-to-end Shadow pipeline validated against a live Neo4j instance: seed → recon → MITRE
   planning → simulation → human approval → verification, reducing simulated risk 51.0 → 0.0.
@@ -38,3 +38,9 @@ All notable changes to this project are documented here. The format is based on
 ### Confirmed (hosted)
 - GitHub Actions `ci`, `codeql`, and `scorecard` workflows pass on `main` (hosted runners),
   including container build, Grype `high` gate, SBOMs, and build-provenance attestation.
+
+### Security (defense-in-depth)
+- Hardened the Cypher validator: `CREATE`/`REMOVE` forbidden outright and write clauses
+  (`MERGE`/`SET`) rejected under read intent, so a read can never mutate the graph even if
+  the forbidden list is relaxed. Added 33 adversarial tests (all real production queries
+  pass; 24+ injection attempts fail closed). Backend suite now 158 tests.
