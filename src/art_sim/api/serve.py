@@ -22,7 +22,7 @@ async def _serve() -> None:
         app,
         # Binds all interfaces by design: the process runs inside a container whose network
         # exposure is controlled by the orchestrator (Service, NetworkPolicy) and TLS edge.
-        host=os.getenv("ART_HOST", "0.0.0.0"),
+        host=os.getenv("ART_HOST", "0.0.0.0"),  # nosec B104
         port=int(os.getenv("ART_PORT", "8080")),
         lifespan="on",
         access_log=False,
