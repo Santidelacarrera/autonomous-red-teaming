@@ -22,7 +22,7 @@ findings with one documented CPython pre-release disposition.
 | Local worker | DEVELOPMENT ONLY | restart/recovery/concurrency tests | No | 2026-09-24 |
 | Distributed worker contract | READY WITH EXTERNAL DEPENDENCY | message, dispatcher, fencing and poison tests | Broker + worker deployment | 2026-09-24 |
 | Broker boundary | READY WITH EXTERNAL DEPENDENCY | provider-neutral contract/config/error tests | Selected broker service | 2026-09-24 |
-| Concrete broker adapter | NOT IMPLEMENTED | no Redis Streams/RabbitMQ/Kafka/SQS transport module | Provider selection and integration environment | 2026-09-24 |
+| Concrete broker adapter | IMPLEMENTED | `RedisStreamsBrokerTransport` + consumer (groups, visibility redelivery, DLQ); 10 tests | Live Redis for deployment | 2026-10-02 |
 | SQLite operational store | DEVELOPMENT ONLY | persistence/concurrency tests | No | 2026-09-24 |
 | Server operational-store boundary | READY WITH EXTERNAL DEPENDENCY | protocol, configuration and rejection tests | Selected server database | 2026-09-24 |
 | PostgreSQL adapter and migrations | NOT IMPLEMENTED | no concrete pool/store or migration package | PostgreSQL service and integration environment | 2026-09-24 |

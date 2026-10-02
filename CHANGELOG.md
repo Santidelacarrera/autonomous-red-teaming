@@ -89,3 +89,13 @@ All notable changes to this project are documented here. The format is based on
   now IMPLEMENTED. Backend suite now 239 tests.
 - Made the Redis adapter's EVAL typing stub-version-agnostic (await via Any) so mypy passes
   under both the locked redis and newer local stubs.
+
+### Added (production adapter)
+- `RedisStreamsBrokerTransport` + `RedisStreamsJobConsumer`/`RedisStreamsJobDelivery`:
+  real Redis Streams broker satisfying `BrokerTransport` and the consumer/delivery contract.
+  Publish idempotency via SET NX dedup; at-least-once with explicit XACK; visibility
+  redelivery of stalled jobs via XAUTOCLAIM; dead-letter stream for poison jobs. Paired with
+  the existing BrokerSimulationDispatcher (DISTRIBUTED). 10 tests via fakeredis (idempotency,
+  receive/decode, ack, timeout reclaim with attempt increment, DLQ, cancellation, pause).
+- production-readiness: 'Concrete broker adapter' now IMPLEMENTED. Backend suite now 249 tests.
+  Only the PostgreSQL operational store remains among the major NOT-IMPLEMENTED adapters.
