@@ -420,7 +420,9 @@ findings require remediation or formal review rather than being treated as unval
 
 ## 22. Supply Chain Security
 
-Python has exact runtime and development lockfiles; npm uses `package-lock.json`. CI runs
+Python ships a **hash-complete** runtime lockfile installed with `--require-hashes` (the
+image fails to build if any dependency is tampered with or a hash is missing), an exact
+development lockfile, and npm uses `package-lock.json`. CI runs
 Ruff, Mypy, Pytest, Bandit, frontend checks, `pip-audit`, `npm audit`, Gitleaks, wheel build,
 CycloneDX SBOM generation, SHA-256 evidence, container build and Anchore image scan.
 The release audit generated and validated local CycloneDX Python/frontend/image SBOMs plus
@@ -493,7 +495,9 @@ security.
 - No SIEM, OpenTelemetry/Prometheus, distributed limiter, or real OIDC tenant is connected.
 - TLS/API gateway/WAF, backups, retention jobs, multi-region coordination and deployment
   are external.
-- Python locks are exact but not hash-complete.
+- The runtime lock (`requirements-runtime.lock`, shipped in the image) is hash-complete and
+  installed with `--require-hashes`; the dev/CI lock (`requirements.lock`) is exact-pinned
+  but intentionally not hash-complete so ad-hoc CI tooling can be added on the same command.
 - The Grype image scan passes the `high` gate: the runtime stage applies `apt-get upgrade`
   (0 fixable High/Critical) and [.grype.yaml](.grype.yaml) fails only on fixable findings.
   Remaining matches are Medium/Low or OS CVEs with no upstream fix, tracked by severity.

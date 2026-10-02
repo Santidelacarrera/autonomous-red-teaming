@@ -6,7 +6,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 COPY requirements-runtime.lock ./
-RUN python -m pip install --prefix=/install --no-compile -r requirements-runtime.lock
+# --require-hashes enforces that every pinned dependency matches a recorded hash,
+# failing the build loudly if the lock is tampered with or a hash is missing.
+RUN python -m pip install --prefix=/install --no-compile --require-hashes -r requirements-runtime.lock
 
 COPY pyproject.toml README.md ./
 COPY src ./src
