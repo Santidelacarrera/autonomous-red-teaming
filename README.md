@@ -7,6 +7,11 @@
 > infrastructure.**
 
 <p>
+  <a href="https://github.com/Santidelacarrera/autonomous-red-teaming/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Santidelacarrera/autonomous-red-teaming/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/Santidelacarrera/autonomous-red-teaming/actions/workflows/codeql.yml"><img alt="CodeQL" src="https://github.com/Santidelacarrera/autonomous-red-teaming/actions/workflows/codeql.yml/badge.svg"></a>
+  <a href="https://github.com/Santidelacarrera/autonomous-red-teaming/actions/workflows/scorecard.yml"><img alt="Scorecard" src="https://github.com/Santidelacarrera/autonomous-red-teaming/actions/workflows/scorecard.yml/badge.svg"></a>
+</p>
+<p>
   <img alt="Python" src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776AB?logo=python&logoColor=white">
   <img alt="FastAPI" src="https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white">
   <img alt="LangGraph" src="https://img.shields.io/badge/workflow-LangGraph-1C3C3C">
