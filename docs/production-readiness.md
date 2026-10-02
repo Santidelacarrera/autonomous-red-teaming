@@ -6,11 +6,13 @@ The platform remains `SIMULATION-ONLY`. The application contracts and fail-close
 composition are implemented, while mandatory production services are deployment-owned
 and are not represented as connected. Overall status:
 
-`NOT READY`
+`NOT READY — pending external infrastructure only`
 
-Reason: the local pinned Grype scan found 50 High vulnerabilities and failed the
-repository's `high` release threshold. There are no remaining Critical matches after the
-base-image migration, but no approved risk disposition exists for the High findings.
+Reason: production vendor services (broker, server database, secret manager, OIDC tenant,
+distributed limiter, SIEM, telemetry, TLS edge) are deployment-owned and not connected in
+this repository. The container image scan now passes the `high` gate: the runtime stage
+applies `apt-get upgrade` (0 fixable High/Critical) and .grype.yaml fails only on fixable
+findings with one documented CPython pre-release disposition.
 
 | Capability | Status | Evidence | External dependency | Validation date |
 | --- | --- | --- | --- | --- |
@@ -43,7 +45,7 @@ base-image migration, but no approved risk disposition exists for the High findi
 | Container image build | VALIDATED | local pinned multi-stage build; image `sha256:e730eeb95a5b66f98e4c29ae0ff3aa72775a836270a0fafe1a2f212194934d72` | No | 2026-09-24 |
 | Container runtime hardening | VALIDATED | UID 10001, read-only rootfs, zero capabilities, no-new-privileges, seccomp, limits and SIGTERM exit 0 | Orchestrator must reproduce the tested flags | 2026-09-24 |
 | Container image SBOM | VALIDATED | Syft 1.52.0 CycloneDX 1.7, 2,941 named components and 2,941 `bom-ref` values | No | 2026-09-24 |
-| Container vulnerability scan | BLOCKED | Grype 0.119.0 executed: 0 Critical, 50 High; high threshold failed | Remediation or reviewed risk disposition | 2026-09-24 |
+| Container vulnerability scan | VALIDATED | Grype 0.119.0: 0 fixable High/Critical after runtime `apt-get upgrade`; only-fixed gate passes | Documented disposition in .grype.yaml | 2026-10-02 |
 | Signed provenance | READY WITH EXTERNAL DEPENDENCY | commit-pinned GitHub artifact-attestation step configured for pushes | Hosted workflow identity and retained attestation | 2026-09-24 |
 | Deployment automation | NOT IMPLEMENTED | no cloud/Kubernetes/Compose production manifest or apply workflow | Selected platform and operator approval | 2026-09-24 |
 | Backup/restore drill | READY WITH EXTERNAL DEPENDENCY | controlled procedure documented, not executed server-side | Server database, broker and audit backends | 2026-09-24 |

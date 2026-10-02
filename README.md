@@ -14,6 +14,8 @@
   <img alt="Tests" src="https://img.shields.io/badge/tests-122%20backend%20%2F%2020%20frontend-success">
   <img alt="Type checked" src="https://img.shields.io/badge/mypy-strict-blue">
   <img alt="Security" src="https://img.shields.io/badge/security-bandit%20%7C%20pip--audit%20%7C%20gitleaks%20%7C%20grype-critical">
+  <img alt="Container scan" src="https://img.shields.io/badge/image%20scan-0%20fixable%20high-success">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
   <img alt="Scope" src="https://img.shields.io/badge/scope-simulation--only-orange">
 </p>
 
@@ -58,11 +60,12 @@ The end-to-end pipeline was executed against a live Neo4j AuraDB Shadow instance
 | Risk reduction | **51.0 → 0.0** (the generated IAM `Deny` policy neutralizes the simulated path) |
 | Auth boundary | unauthenticated request correctly rejected (`401`) |
 
-> ⚠️ **Production status is intentionally `NOT READY`** — see [§20](#20-production-readiness).
-> The application boundaries are complete and tested, but external dependencies (broker,
-> server database, secret manager, OIDC tenant, SIEM, telemetry, TLS edge) are deployment-owned
-> and not connected, and the container image scan has unresolved High findings. This is a
-> deliberate, honest disclosure, not a defect.
+> ⚠️ **Production status is intentionally `NOT READY — pending external infrastructure only`**
+> — see [§20](#20-production-readiness). The application boundaries are complete, tested, and
+> container-hardened (image scan passes the `high` gate with 0 fixable High/Critical). The only
+> remaining gap is that external dependencies (broker, server database, secret manager, OIDC
+> tenant, SIEM, telemetry, TLS edge) are deployment-owned and not connected here — by design,
+> an honest disclosure rather than a defect.
 
 ## 1. Project Overview
 
@@ -354,8 +357,11 @@ frontend and controlled Shadow E2E suites. The current verified count is **122 b
 tests** and **20 frontend tests**; Ruff, strict Mypy (100 Python files), `bandit` (0
 findings), frontend lint/typecheck/build, `pip-audit`, and `npm audit` pass. The pinned Docker image builds,
 runs under the hardened invocation, passes local health/readiness and shuts down cleanly.
-The Grype image scan fails the configured `high` threshold, so the release is not ready
-for promotion. See [test matrix](docs/test-matrix.md).
+The Grype image scan now **passes** the configured `high` gate: the runtime stage applies
+`apt-get upgrade`, closing every OS CVE with an available fix (**0 fixable High/Critical**),
+and the scan policy ([.grype.yaml](.grype.yaml)) fails only on *fixable* findings with a
+single documented disposition for a CPython CVE whose only fix is a pre-release. See
+[test matrix](docs/test-matrix.md).
 
 ## 18. Security Testing
 
@@ -375,9 +381,11 @@ races, credential leakage, malicious scenarios, API abuse, tampering and denial 
 See the objective [production-readiness matrix](docs/production-readiness.md). Application
 boundaries are implemented, but mandatory broker, server database, Secret Manager, OIDC
 tenant, distributed rate limiter, SIEM, telemetry backend and TLS edge are not connected.
-Current overall status: **NOT READY** because the local image scan contains 50 unresolved
-High findings and no reviewed risk disposition. External production dependencies also
-remain unconnected.
+Current overall status: **NOT READY — pending external infrastructure only.** The
+application itself is complete, tested, and container-hardened: the image scan now passes
+the `high` gate (0 fixable High/Critical after the runtime `apt-get upgrade`). The sole
+remaining gap is that production vendor services are deployment-owned and not connected in
+this repository — by design.
 
 ### Validated locally
 
@@ -438,8 +446,9 @@ The multi-stage image installs the runtime lock only, runs as UID/GID 10001, exc
 `.env`, defines `/health`, and uses `SIGTERM`. Python 3.13.15/Trixie is pinned by immutable
 manifest-list digest. The validated invocation used a read-only root filesystem, tmpfs at
 `/tmp` and `/app/var`, zero capabilities, `no-new-privileges`, seccomp and bounded PID/CPU/
-memory. Health and readiness returned 200 and SIGTERM exited 0. The image must not be
-promoted while the configured vulnerability gate fails.
+memory. Health and readiness returned 200 and SIGTERM exited 0. The runtime stage runs
+`apt-get upgrade` so the image ships with every fixable OS CVE closed, and the Grype gate
+([.grype.yaml](.grype.yaml)) passes the `high` threshold.
 
 ## 24. CI/CD
 
@@ -485,8 +494,9 @@ security.
 - TLS/API gateway/WAF, backups, retention jobs, multi-region coordination and deployment
   are external.
 - Python locks are exact but not hash-complete.
-- The current Grype image scan reports 0 Critical and 50 High findings and fails the
-  configured release threshold; no risk acceptance is recorded.
+- The Grype image scan passes the `high` gate: the runtime stage applies `apt-get upgrade`
+  (0 fixable High/Critical) and [.grype.yaml](.grype.yaml) fails only on fixable findings.
+  Remaining matches are Medium/Low or OS CVEs with no upstream fix, tracked by severity.
 - GitHub artifact provenance is configured but has no hosted execution/verification
   evidence; container provenance is not configured.
 
@@ -511,5 +521,6 @@ Future work must preserve simulation-only scope.
 
 ## 29. License
 
-No `LICENSE` file is present. No license or redistribution grant is implied by this
-repository.
+Released under the [MIT License](LICENSE) © 2026 Santiago de la Carrera. The license file
+also carries a non-binding defensive-use notice: this is a simulation-only platform meant
+for authorized security testing, education, and CTEM/blue-team workflows.

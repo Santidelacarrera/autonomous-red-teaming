@@ -17,6 +17,15 @@ FROM python:3.13.15-slim-trixie@sha256:8d9d0b8bcf6506481eae4907c18f5e3e7902e629f
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
+# Patch OS packages that ship with an available security fix (e.g. openssl/libssl3,
+# libpcre2) before dropping privileges. This closes every Debian CVE for which an
+# upstream fix exists at build time; CVEs with no published fix are governed by the
+# only-fixed scan policy and the documented dispositions in .grype.yaml.
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN groupadd --gid 10001 appuser \
     && useradd --no-create-home --uid 10001 --gid 10001 --shell /usr/sbin/nologin appuser \
     && mkdir -p /app/var \
