@@ -294,6 +294,17 @@ Copy-Item .env.example .env
 .\.venv\Scripts\python.exe -m uvicorn art_sim.api.main:app --reload --port 8080
 ```
 
+Or run the whole hardened stack in one command with Docker (add `--profile shadow` to also
+start a local Neo4j for the seed/E2E scripts):
+
+```bash
+docker compose up --build          # API on http://127.0.0.1:8080
+```
+
+A [`Makefile`](Makefile) wraps the common tasks (`make check` runs lint + typecheck +
+security + tests; `make docker-scan` builds and scans the image). On Windows, run it under
+Git Bash/WSL or use the PowerShell commands shown here.
+
 In another terminal:
 
 ```powershell
