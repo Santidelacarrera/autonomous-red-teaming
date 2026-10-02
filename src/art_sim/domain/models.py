@@ -16,7 +16,7 @@ class AssetType(StrEnum):
 
     COMPUTE = "compute"
     DATABASE = "database"
-    SECRET = "secret"
+    SECRET = "secret"  # nosec B105 - asset-type enum member, not a credential
     KUBERNETES_WORKLOAD = "kubernetes_workload"
     KUBERNETES_NODE = "kubernetes_node"
     KUBERNETES_SERVICE = "kubernetes_service"

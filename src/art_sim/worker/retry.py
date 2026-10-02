@@ -32,7 +32,7 @@ class RetryPolicy(BaseModel):
             self.maximum_backoff_seconds,
             self.initial_backoff_seconds * (2 ** (attempt - 1)),
         )
-        sample = random.random() if random_value is None else random_value
+        sample = random.random() if random_value is None else random_value  # nosec B311 - retry jitter, not security-sensitive
         if not 0.0 <= sample <= 1.0:
             raise ValueError("Jitter sample must be between zero and one")
         return float(base * (1.0 - self.jitter_ratio + (2.0 * self.jitter_ratio * sample)))
