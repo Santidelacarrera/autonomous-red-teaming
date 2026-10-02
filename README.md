@@ -16,7 +16,7 @@
   <img alt="FastAPI" src="https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white">
   <img alt="LangGraph" src="https://img.shields.io/badge/workflow-LangGraph-1C3C3C">
   <img alt="React" src="https://img.shields.io/badge/UI-React%20%2B%20Vite-61DAFB?logo=react&logoColor=black">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-249%20backend%20%2F%2020%20frontend-success">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-258%20backend%20%2F%2020%20frontend-success">
   <img alt="Type checked" src="https://img.shields.io/badge/mypy-strict-blue">
   <img alt="Security" src="https://img.shields.io/badge/security-bandit%20%7C%20pip--audit%20%7C%20gitleaks%20%7C%20grype-critical">
   <img alt="Container scan" src="https://img.shields.io/badge/image%20scan-0%20fixable%20high-success">
@@ -370,7 +370,7 @@ accepted work and close injected dependencies.
 ## 17. Testing
 
 The local audit executes unit, integration, security, concurrency, recovery,
-frontend and controlled Shadow E2E suites. The current verified count is **249 backend
+frontend and controlled Shadow E2E suites. The current verified count is **258 backend
 tests** and **20 frontend tests**; Ruff, strict Mypy (100 Python files), `bandit` (0
 findings), frontend lint/typecheck/build, `pip-audit`, and `npm audit` pass. The pinned Docker image builds,
 runs under the hardened invocation, passes local health/readiness and shuts down cleanly.
@@ -525,8 +525,11 @@ security.
   **mounted-secrets provider** ([`mounted_secret_provider`](src/art_sim/adapters/mounted_secret_provider.py)).
   a **Redis Streams broker** transport + consumer
   ([`redis_streams_broker`](src/art_sim/adapters/redis_streams_broker.py); consumer groups,
-  visibility redelivery via `XAUTOCLAIM`, dead-letter stream). The PostgreSQL operational
-  store remains the one major deployment-owned adapter still to implement.
+  visibility redelivery via `XAUTOCLAIM`, dead-letter stream), and a server-grade
+  **PostgreSQL operational store** ([`postgres_store`](src/art_sim/adapters/postgres_store.py);
+  asyncpg, `FOR UPDATE` row locks, leases/fencing/CAS, `pip install .[postgres]`). Every
+  application-side adapter now has a concrete implementation; what remains is connecting them
+  to live vendor services and an external TLS edge / OIDC tenant, which are deployment-owned.
 - No PostgreSQL/equivalent operational-store adapter is implemented.
 - No AWS/Vault/GCP/Azure secret-manager adapter is connected.
 - No SIEM, OpenTelemetry/Prometheus, distributed limiter, or real OIDC tenant is connected.

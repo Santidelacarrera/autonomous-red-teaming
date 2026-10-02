@@ -99,3 +99,16 @@ All notable changes to this project are documented here. The format is based on
   receive/decode, ack, timeout reclaim with attempt increment, DLQ, cancellation, pause).
 - production-readiness: 'Concrete broker adapter' now IMPLEMENTED. Backend suite now 249 tests.
   Only the PostgreSQL operational store remains among the major NOT-IMPLEMENTED adapters.
+
+### Added (production adapter — capstone)
+- `PostgresOperationalStore`: server-grade asyncpg implementation of the full OperationalStore
+  contract (runs, idempotent creation, approval CAS, worker leases/fencing, checkpoints with
+  integrity, immutable results/reviews, append-only audit). Mirrors the SQLite store's logic;
+  uses `SELECT ... FOR UPDATE` row locks (the Postgres equivalent of BEGIN IMMEDIATE) and
+  timestamptz comparisons. Opt-in via `pip install .[postgres]`.
+- 9 integration tests against a REAL PostgreSQL (dev container / CI service) covering
+  single-owner acquisition, fencing-token increment on lease expiry, stale-worker rejection,
+  approval CAS idempotency, idempotent creation, cancellation, and health. CI now runs a
+  postgres:16 service so these execute (not skip). Backend suite now 258 tests.
+- Every application-side production adapter now has a concrete implementation; production
+  readiness is gated only by connecting them to live vendor services (deployment-owned).

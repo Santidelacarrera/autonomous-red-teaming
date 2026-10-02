@@ -20,6 +20,8 @@ anyio==4.15.1
     #   starlette
 ast-serialize==0.11.2
     # via mypy
+asyncpg==0.31.0
+    # via autonomous-red-teaming (pyproject.toml)
 bandit==1.9.4
     # via autonomous-red-teaming (pyproject.toml)
 certifi==2026.7.22

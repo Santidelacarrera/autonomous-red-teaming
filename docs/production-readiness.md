@@ -8,11 +8,11 @@ and are not represented as connected. Overall status:
 
 `NOT READY — pending external infrastructure only`
 
-Reason: production vendor services (broker, server database, secret manager, OIDC tenant,
-distributed limiter, SIEM, telemetry, TLS edge) are deployment-owned and not connected in
-this repository. The container image scan now passes the `high` gate: the runtime stage
-applies `apt-get upgrade` (0 fixable High/Critical) and .grype.yaml fails only on fixable
-findings with one documented CPython pre-release disposition.
+Reason: every application-side adapter now has a concrete implementation (Redis limiter,
+Redis Streams broker, PostgreSQL store, OTLP telemetry, durable audit, mounted secrets),
+but production still requires those adapters to be connected to LIVE vendor services and an
+external TLS edge / real OIDC tenant, which are deployment-owned and not provisioned in this
+repository. The container image scan passes the `high` gate (0 fixable High/Critical).
 
 | Capability | Status | Evidence | External dependency | Validation date |
 | --- | --- | --- | --- | --- |
@@ -25,7 +25,7 @@ findings with one documented CPython pre-release disposition.
 | Concrete broker adapter | IMPLEMENTED | `RedisStreamsBrokerTransport` + consumer (groups, visibility redelivery, DLQ); 10 tests | Live Redis for deployment | 2026-10-02 |
 | SQLite operational store | DEVELOPMENT ONLY | persistence/concurrency tests | No | 2026-09-24 |
 | Server operational-store boundary | READY WITH EXTERNAL DEPENDENCY | protocol, configuration and rejection tests | Selected server database | 2026-09-24 |
-| PostgreSQL adapter and migrations | NOT IMPLEMENTED | no concrete pool/store or migration package | PostgreSQL service and integration environment | 2026-09-24 |
+| PostgreSQL adapter and migrations | IMPLEMENTED | `PostgresOperationalStore` (asyncpg, FOR UPDATE row locks, idempotent schema); 9 integration tests vs real PostgreSQL | Live PostgreSQL for deployment | 2026-10-02 |
 | Secret-manager boundary | READY WITH EXTERNAL DEPENDENCY | async port, startup validation and redaction tests | Selected managed secret service | 2026-09-24 |
 | Concrete managed-secret adapter | IMPLEMENTED | `MountedSecretsProvider` (Docker/K8s mounted secrets, path-traversal-safe); tests | Mounted secret volume for deployment | 2026-10-02 |
 | Distributed rate-limit boundary | READY WITH EXTERNAL DEPENDENCY | port + process-adapter rejection tests | Selected shared limiter | 2026-09-24 |
