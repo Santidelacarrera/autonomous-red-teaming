@@ -32,6 +32,9 @@ security: ## Bandit SAST + pip-audit dependency scan
 	$(PY) -m bandit -c pyproject.toml -r src
 	$(PY) -m pip_audit -r requirements.lock
 
+mutation: ## On-demand mutation testing of security modules (slow; Linux/WSL + `pip install mutmut`)
+	$(PY) -m mutmut run
+
 fmt: ## Auto-fix lint issues
 	$(PY) -m ruff check --fix .
 

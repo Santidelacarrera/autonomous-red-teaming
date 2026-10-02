@@ -62,3 +62,11 @@ All notable changes to this project are documented here. The format is based on
   Control), ACCESS→T1210 (Exploitation of Remote Services). New scenarios: container
   breakout, IAM privilege chain, credential harvest. Verified end-to-end (succeeded +
   verified) through the live API. Backend suite now 200 tests.
+
+### Security (robustness: fuzzing + mutation)
+- Added dependency-free randomized fuzzing (3,000 iterations each) for the Cypher validator,
+  prompt-injection sanitizer, and credential redaction, asserting their invariants. The fuzz
+  suite found and fixed a sanitizer non-idempotency at the truncation boundary (trailing
+  whitespace could reach the planner). Backend suite now 210 tests.
+- Added on-demand mutation-testing config (`make mutation`, mutmut; Linux/WSL) targeting the
+  security-critical modules so surviving mutants reveal weak test assertions.
