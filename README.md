@@ -16,7 +16,7 @@
   <img alt="FastAPI" src="https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white">
   <img alt="LangGraph" src="https://img.shields.io/badge/workflow-LangGraph-1C3C3C">
   <img alt="React" src="https://img.shields.io/badge/UI-React%20%2B%20Vite-61DAFB?logo=react&logoColor=black">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-184%20backend%20%2F%2020%20frontend-success">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-192%20backend%20%2F%2020%20frontend-success">
   <img alt="Type checked" src="https://img.shields.io/badge/mypy-strict-blue">
   <img alt="Security" src="https://img.shields.io/badge/security-bandit%20%7C%20pip--audit%20%7C%20gitleaks%20%7C%20grype-critical">
   <img alt="Container scan" src="https://img.shields.io/badge/image%20scan-0%20fixable%20high-success">
@@ -134,6 +134,7 @@ src/art_sim/
   api/              FastAPI routes, services and composition roots
   attack/           Shadow graph and deterministic risk calculation
   blast_radius/     Simulated impact calculation
+  adapters/         Opt-in concrete production adapters (Redis rate limiter)
   domain/           Validated models, ports and domain exceptions
   infrastructure/   Neo4j/Cypher and review-only GitHub adapter
   observability/    Typed metrics, traces and logging boundaries
@@ -369,7 +370,7 @@ accepted work and close injected dependencies.
 ## 17. Testing
 
 The local audit executes unit, integration, security, concurrency, recovery,
-frontend and controlled Shadow E2E suites. The current verified count is **184 backend
+frontend and controlled Shadow E2E suites. The current verified count is **192 backend
 tests** and **20 frontend tests**; Ruff, strict Mypy (100 Python files), `bandit` (0
 findings), frontend lint/typecheck/build, `pip-audit`, and `npm audit` pass. The pinned Docker image builds,
 runs under the hardened invocation, passes local health/readiness and shuts down cleanly.
@@ -515,7 +516,11 @@ security.
 
 ## 27. Known Limitations
 
-- No concrete Redis/RabbitMQ/Kafka/SQS transport is connected.
+- A concrete **Redis distributed rate limiter** adapter is implemented
+  ([`art_sim.adapters.redis_rate_limiter`](src/art_sim/adapters/redis_rate_limiter.py),
+  atomic Lua sliding window, `pip install .[redis]`); other broker/store/secret/SIEM/
+  telemetry adapters remain deployment-owned. No concrete Redis/RabbitMQ/Kafka/SQS *broker*
+  transport is connected.
 - No PostgreSQL/equivalent operational-store adapter is implemented.
 - No AWS/Vault/GCP/Azure secret-manager adapter is connected.
 - No SIEM, OpenTelemetry/Prometheus, distributed limiter, or real OIDC tenant is connected.

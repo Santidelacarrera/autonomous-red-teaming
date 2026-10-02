@@ -47,3 +47,10 @@ All notable changes to this project are documented here. The format is based on
   (`MERGE`/`SET`) rejected under read intent, so a read can never mutate the graph even if
   the forbidden list is relaxed. Added 33 adversarial tests (all real production queries
   pass; 24+ injection attempts fail closed). Backend suite now 184 tests.
+
+### Added (production adapter)
+- First concrete production adapter: `RedisRateLimiter` for the distributed rate-limit port
+  (`pip install .[redis]`). Atomic sliding-window log via a single Lua script, so the limit
+  holds across replicas. 8 tests (limit enforcement, independent keys/policies, window
+  rollover, concurrency = exactly N allowed, backend-error mapping) using fakeredis[lua].
+  Backend suite now 192 tests.

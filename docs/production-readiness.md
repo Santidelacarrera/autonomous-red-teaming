@@ -29,7 +29,7 @@ findings with one documented CPython pre-release disposition.
 | Secret-manager boundary | READY WITH EXTERNAL DEPENDENCY | async port, startup validation and redaction tests | Selected managed secret service | 2026-09-24 |
 | Concrete managed-secret adapter | NOT IMPLEMENTED | no AWS/Vault/GCP/Azure client adapter | Provider selection and workload identity | 2026-09-24 |
 | Distributed rate-limit boundary | READY WITH EXTERNAL DEPENDENCY | port + process-adapter rejection tests | Selected shared limiter | 2026-09-24 |
-| Concrete distributed limiter | NOT IMPLEMENTED | no Redis/gateway/proxy adapter | Shared backend or edge service | 2026-09-24 |
+| Concrete distributed limiter | IMPLEMENTED | `RedisRateLimiter` (atomic Lua sliding window); 8 tests incl. concurrency/rollover via fakeredis | Live Redis for deployment | 2026-10-02 |
 | Durable audit boundary | READY WITH EXTERNAL DEPENDENCY | typed/redacted schema and retention contract tests | Selected SIEM/event store | 2026-09-24 |
 | Concrete durable audit adapter | NOT IMPLEMENTED | no SIEM/event-store client adapter | Audit backend and retention service | 2026-09-24 |
 | External telemetry boundary | READY WITH EXTERNAL DEPENDENCY | typed metrics/traces and capability rejection tests | Selected OTLP/Prometheus backend | 2026-09-24 |
