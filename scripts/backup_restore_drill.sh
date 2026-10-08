@@ -26,7 +26,9 @@ SOURCE_CONTAINER="art-sim-dr-drill-source"
 RECOVERY_CONTAINER="art-sim-dr-drill-recovery"
 NETWORK="art-sim-dr-drill-net"
 PG_IMAGE="postgres:16-alpine"
-PG_PASSWORD="dr-drill-pw"
+# Generated fresh for this disposable container on every run (never a literal secret
+# checked into the script) -- it never outlives the drill and is used nowhere else.
+PG_PASSWORD="$(openssl rand -hex 16)"
 DB_NAME="artsim"
 SOURCE_PORT="55433"
 RECOVERY_PORT="55434"

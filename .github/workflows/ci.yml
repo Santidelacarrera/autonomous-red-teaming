@@ -163,6 +163,12 @@ jobs:
       attestations: write
       packages: write
     steps:
+      - name: Log in to GHCR
+        # push-to-registry: true below pushes the attestation as an OCI referrer of the
+        # image, which needs its own registry credentials in THIS job (attest-container
+        # does not inherit the `container` job's login). Plain `docker login`, consistent
+        # with the `container` job, for the same pinned-action reason noted there.
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
       - name: Attest container image provenance
         uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
