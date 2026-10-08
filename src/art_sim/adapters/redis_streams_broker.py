@@ -16,6 +16,7 @@ leases, and fencing; the broker only provides durable at-least-once activation.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, ClassVar
 from uuid import UUID
 
@@ -93,6 +94,27 @@ class RedisStreamsBrokerTransport:
             return BrokerHealth(provider=self.provider, ready=True)
         except RedisError:
             return BrokerHealth(provider=self.provider, ready=False)
+
+    async def purge_dead_letter(self, *, older_than: datetime, dry_run: bool) -> int:
+        """Delete dead-lettered jobs older than ``older_than`` (``RetentionPurgeBroker``).
+
+        Redis Streams entry IDs are ``<milliseconds>-<sequence>``, so an exclusive upper
+        bound of ``cutoff_ms - 1`` (an ID with no explicit sequence) selects every entry
+        strictly before the cutoff regardless of its sequence component.
+        """
+        cutoff_ms = int(older_than.timestamp() * 1000)
+        if cutoff_ms <= 0:
+            return 0
+        entries = await self._client.xrange(
+            self._settings.dlq_stream, min="-", max=str(cutoff_ms - 1), count=10_000
+        )
+        if not entries:
+            return 0
+        if dry_run:
+            return len(entries)
+        entry_ids = [entry_id for entry_id, _fields in entries]
+        await self._client.xdel(self._settings.dlq_stream, *entry_ids)
+        return len(entry_ids)
 
     async def close(self) -> None:
         await self._client.aclose()

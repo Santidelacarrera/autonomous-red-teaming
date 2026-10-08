@@ -436,9 +436,13 @@ audit/telemetry boundaries, TLS edge contract, Anchore gates and GitHub provenan
 
 ### Not yet validated
 
-Concrete production adapters, migrations, deployment, hosted provenance verification,
-backup/restore and multi-region recovery. The image scan was executed but failed; its High
-findings require remediation or formal review rather than being treated as unvalidated.
+Multi-region recovery remains unimplemented. Concrete adapters, migrations, the retention
+job, the backup/restore drill, and hosted container-provenance verification are now
+implemented and unit/integration-tested in this sandbox, but have not yet been exercised
+against this sandbox's PostgreSQL/Redis service or GitHub's hosted runners — see Phase 15
+in [`docs/production-readiness.md`](docs/production-readiness.md) for exactly what was and
+was not run. The image scan was executed but failed; its High findings require remediation
+or formal review rather than being treated as unvalidated.
 
 ## 21. Operational Runbooks
 
@@ -463,8 +467,11 @@ The release audit generated and validated local CycloneDX Python/frontend/image 
 a SHA-256 manifest under ignored `var/audit/`. Grype 0.119.0 and Syft 1.52.0 are versioned
 explicitly in CI; the local Grype result fails the `high` cutoff.
 All Actions use immutable commit SHAs. GitHub artifact provenance is configured for
-`push`, but remains unvalidated until a hosted workflow emits and independently verifies
-an attestation.
+`push` for release artifacts, and, for the container image specifically, is now generated
+and independently re-verified by a separate job (`attest-container` ->
+`verify-container-provenance`) in the same workflow — see
+[`docs/supply-chain.md`](docs/supply-chain.md) for what remains unexecuted until a hosted
+run actually happens.
 
 ## 23. Docker
 
@@ -495,9 +502,11 @@ workflow runs `security-extended` static analysis on pushes, PRs and a weekly sc
 [Dependabot](.github/dependabot.yml) opens grouped weekly dependency PRs. Third-party Actions
 are commit-pinned. The hosted pipeline is **green on GitHub Actions** for `main` — `ci`,
 `codeql`, and `scorecard` all complete successfully, including the container build, the Grype
-`high` gate, SBOM generation, and the build-provenance attestation step. Independent
-attestation *verification* (`gh attestation verify`) is still recommended before promoting a
-specific artifact.
+`high` gate, SBOM generation, and the build-provenance attestation step. The container image
+itself is now pushed to GHCR by digest, attested (`attest-container`), and independently
+re-verified by a separate `verify-container-provenance` job — `scripts/verify_image_provenance.py`
+runs the same `gh attestation verify` check and is meant to run again immediately before
+promoting a specific digest to a production cluster.
 
 ## 25. Failure Modes
 
@@ -528,33 +537,50 @@ security.
 
 ## 27. Known Limitations
 
-- Two concrete production adapters are implemented: a **Redis distributed rate limiter**
-  ([`redis_rate_limiter`](src/art_sim/adapters/redis_rate_limiter.py), atomic Lua sliding
-  window, `pip install .[redis]`) and an **OpenTelemetry/OTLP telemetry sink**
-  ([`otlp_telemetry`](src/art_sim/adapters/otlp_telemetry.py), metrics + traces,
-  `pip install .[telemetry]`), a durable **append-only audit sink**
-  ([`jsonl_audit_sink`](src/art_sim/adapters/jsonl_audit_sink.py)), and a path-traversal-safe
-  **mounted-secrets provider** ([`mounted_secret_provider`](src/art_sim/adapters/mounted_secret_provider.py)).
+- Every application-side adapter now has at least one concrete implementation: a **Redis
+  distributed rate limiter** ([`redis_rate_limiter`](src/art_sim/adapters/redis_rate_limiter.py),
+  `pip install .[redis]`), an **OpenTelemetry/OTLP telemetry sink**
+  ([`otlp_telemetry`](src/art_sim/adapters/otlp_telemetry.py), `pip install .[telemetry]`), a
+  durable **append-only audit sink** ([`jsonl_audit_sink`](src/art_sim/adapters/jsonl_audit_sink.py))
+  plus a **direct SIEM-forwarding** variant
+  ([`siem_http_audit_sink`](src/art_sim/adapters/siem_http_audit_sink.py)), a path-traversal-safe
+  **mounted-secrets provider** ([`mounted_secret_provider`](src/art_sim/adapters/mounted_secret_provider.py))
+  plus **AWS Secrets Manager** and **HashiCorp Vault** adapters
+  ([`aws_secrets_manager_provider`](src/art_sim/adapters/aws_secrets_manager_provider.py)
+  `pip install .[aws]`,
+  [`vault_secret_provider`](src/art_sim/adapters/vault_secret_provider.py) `pip install .[vault]`),
   a **Redis Streams broker** transport + consumer
   ([`redis_streams_broker`](src/art_sim/adapters/redis_streams_broker.py); consumer groups,
-  visibility redelivery via `XAUTOCLAIM`, dead-letter stream), and a server-grade
-  **PostgreSQL operational store** ([`postgres_store`](src/art_sim/adapters/postgres_store.py);
-  asyncpg, `FOR UPDATE` row locks, leases/fencing/CAS, `pip install .[postgres]`). Every
-  application-side adapter now has a concrete implementation; what remains is connecting them
-  to live vendor services and an external TLS edge / OIDC tenant, which are deployment-owned.
-- No PostgreSQL/equivalent operational-store adapter is implemented.
-- No AWS/Vault/GCP/Azure secret-manager adapter is connected.
-- No SIEM, OpenTelemetry/Prometheus, distributed limiter, or real OIDC tenant is connected.
-- TLS/API gateway/WAF, backups, retention jobs, multi-region coordination and deployment
-  are external.
+  visibility redelivery via `XAUTOCLAIM`, dead-letter stream + retention purge), and a
+  server-grade **PostgreSQL operational store**
+  ([`postgres_store`](src/art_sim/adapters/postgres_store.py); asyncpg, `FOR UPDATE` row
+  locks, leases/fencing/CAS, retention purge methods, `pip install .[postgres]`) with
+  versioned **Alembic migrations** (`migrations/`, `pip install .[migrations]`). GCP Secret
+  Manager and Azure Key Vault remain declared as provider enum values
+  (`SecretManagerProvider`) with no concrete adapter yet. What remains is connecting the
+  implemented adapters to live vendor services and a real OIDC tenant, which are
+  deployment-owned.
+- An **automated data-retention purge job** ([`art_sim.retention.job`](src/art_sim/retention/job.py))
+  now enforces the `ART_*_RETENTION_DAYS` policy table in
+  [`docs/data-retention.md`](docs/data-retention.md); it is dry-run by default and the Helm
+  `CronJob` that schedules it is disabled until an operator opts in.
+- An **executable disaster-recovery drill** ([`scripts/backup_restore_drill.sh`](scripts/backup_restore_drill.sh),
+  scheduled weekly) and **TLS edge configuration** (Helm `Ingress` + a Caddy compose
+  overlay, see [`docs/tls-edge.md`](docs/tls-edge.md)) replace what were previously only
+  written procedures.
+- The container image is now pushed to GHCR by digest, attested, and **independently
+  re-verified** by a separate CI job and [`scripts/verify_image_provenance.py`](scripts/verify_image_provenance.py)
+  — see [`docs/supply-chain.md`](docs/supply-chain.md) for what "independent" means here and
+  what is still only configured rather than executed against a hosted runner.
 - The runtime lock (`requirements-runtime.lock`, shipped in the image) is hash-complete and
   installed with `--require-hashes`; the dev/CI lock (`requirements.lock`) is exact-pinned
   but intentionally not hash-complete so ad-hoc CI tooling can be added on the same command.
+  The new adapters' dependencies (`boto3`, `hvac`, `alembic`, `sqlalchemy`) are declared in
+  `pyproject.toml`'s extras but not yet in `requirements.lock`'s resolved graph — see
+  `docs/supply-chain.md`.
 - The Grype image scan passes the `high` gate: the runtime stage applies `apt-get upgrade`
   (0 fixable High/Critical) and [.grype.yaml](.grype.yaml) fails only on fixable findings.
   Remaining matches are Medium/Low or OS CVEs with no upstream fix, tracked by severity.
-- GitHub artifact provenance is configured but has no hosted execution/verification
-  evidence; container provenance is not configured.
 
 ## 28. Roadmap
 
@@ -562,18 +588,24 @@ security.
 
 Simulation-only graph/agent workflow, HITL, API/UI, local durable worker, broker/database/
 secret/audit/telemetry/rate-limit contracts, production capability checks, readiness,
-failure/concurrency/recovery tests, lockfiles and CI supply-chain gates.
+failure/concurrency/recovery tests, lockfiles and CI supply-chain gates, concrete AWS
+Secrets Manager/Vault/mounted secret adapters, a direct-SIEM-forward audit sink, versioned
+PostgreSQL migrations, an automated data-retention purge job, an executable backup/restore
+drill, TLS edge configuration (Helm Ingress + Caddy overlay), and independently-verified
+container provenance.
 
 ### External Integration
 
-Implement and certify deployment-owned adapters, migrations, OIDC tenant, TLS edge,
-retention jobs, alerting, backups, restore drills and hosted CI evidence.
+Connect the implemented adapters to live vendor services (a real OIDC tenant, a production
+Postgres/Redis/Vault/AWS account, a real SIEM endpoint), run the new migration/retention/DR
+suites against them, execute the hosted `ci`/`dr-drill` workflows at least once, and
+regenerate `requirements.lock` with the new adapters' dependencies resolved.
 
 ### Future
 
-Multi-region ownership semantics, organization-specific compliance retention, container
-provenance, independent attestation verification and measured capacity/load targets.
-Future work must preserve simulation-only scope.
+Multi-region ownership semantics, organization-specific compliance retention beyond the
+generic day-count policy already enforced, GCP Secret Manager/Azure Key Vault adapters, and
+measured capacity/load targets. Future work must preserve simulation-only scope.
 
 ## 29. License
 

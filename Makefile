@@ -2,11 +2,13 @@
 # equivalent PowerShell commands in the README. PY points at the project venv.
 PY ?= .venv/Scripts/python.exe
 IMAGE ?= art-sim:local
+IMAGE_REF ?= ghcr.io/santidelacarrera/autonomous-red-teaming@sha256:REPLACE_ME
 
 .DEFAULT_GOAL := help
 .PHONY: help setup install test lint typecheck security audit fmt run \
         frontend-install frontend-test frontend-build frontend-lint \
-        docker-build docker-scan compose-up compose-down seed e2e check clean
+        docker-build docker-scan compose-up compose-down seed e2e check clean \
+        migrate migrate-current dr-drill retention-job retention-job-dry-run verify-provenance
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -71,6 +73,24 @@ seed: ## Seed the Shadow Neo4j topology (requires configured .env)
 
 e2e: ## Run the Shadow end-to-end simulation (requires seeded Neo4j)
 	$(PY) scripts/run_e2e.py
+
+migrate: ## Apply PostgreSQL migrations up to head (requires .[migrations] + a DSN)
+	$(PY) scripts/run_migrations.py upgrade head
+
+migrate-current: ## Show the current applied migration revision
+	$(PY) scripts/run_migrations.py current
+
+dr-drill: ## Run the backup -> failure -> restore -> verify disaster-recovery drill
+	bash scripts/backup_restore_drill.sh
+
+retention-job: ## Execute the automated data-retention purge job for real
+	$(PY) scripts/run_retention_job.py --execute
+
+retention-job-dry-run: ## Report what the retention purge job would delete, without deleting
+	$(PY) scripts/run_retention_job.py --dry-run
+
+verify-provenance: ## Independently verify a container image's build provenance attestation
+	$(PY) scripts/verify_image_provenance.py $(IMAGE_REF)
 
 check: lint typecheck security test ## Run the full backend quality gate
 

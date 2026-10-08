@@ -1,0 +1,68 @@
+{{- if .Values.retention.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "art-sim.fullname" . }}-retention
+  labels:
+    {{- include "art-sim.labels" . | nindent 4 }}
+    app.kubernetes.io/component: retention
+spec:
+  schedule: {{ .Values.retention.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: {{ .Values.retention.activeDeadlineSeconds }}
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            {{- include "art-sim.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: retention
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "art-sim.serviceAccountName" . }}
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: retention
+              image: {{ include "art-sim.image" . | quote }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              securityContext:
+                {{- toYaml .Values.containerSecurityContext | nindent 16 }}
+              # --execute, not --dry-run: this CronJob is gated off by default
+              # (retention.enabled: false) precisely so an operator opts in only after
+              # confirming the configured *_RETENTION_DAYS values match policy.
+              command: ["python", "scripts/run_retention_job.py", "--execute"]
+              envFrom:
+                - configMapRef:
+                    name: {{ include "art-sim.fullname" . }}-config
+              env:
+                - name: ART_DATABASE_DSN_SECRET_NAME
+                  value: {{ .Values.secrets.databaseDsnSecretName | quote }}
+                - name: ART_BROKER_CREDENTIAL_SECRET_NAME
+                  value: {{ .Values.secrets.brokerCredentialSecretName | quote }}
+                - name: ART_SECRETS_DIR
+                  value: {{ .Values.secrets.mountPath | quote }}
+              resources:
+                {{- toYaml .Values.resources | nindent 16 }}
+              volumeMounts:
+                - name: secrets
+                  mountPath: {{ .Values.secrets.mountPath }}
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: secrets
+              secret:
+                secretName: {{ .Values.secrets.mountedSecretName }}
+            - name: tmp
+              emptyDir:
+                medium: Memory
+                sizeLimit: 64Mi
+{{- end }}
