@@ -20,8 +20,16 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
     env:
       ART_PG_TEST_DSN: postgresql://postgres:devpw@127.0.0.1:5432/artsim
+      # Real Redis for the broker / rate-limiter / DLQ suites (otherwise they run on fakeredis only).
+      ART_REDIS_TEST_URL: redis://127.0.0.1:6379/15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -34,13 +42,6 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -r requirements.lock pip-audit cyclonedx-bom bandit
-      # alembic/SQLAlchemy back the versioned-migration tests (docs/migrations.md) and are
-      # not yet in requirements.lock's resolved graph (regenerating that lock needs network
-      # this environment did not have when these adapters were added — see
-      # docs/supply-chain.md's evidence boundary). boto3/hvac are intentionally NOT
-      # installed here: the AWS/Vault adapter tests use hand-written fakes and skip their
-      # `from_region`/`from_url` factory paths when the real SDK is absent.
-      - run: python -m pip install "alembic>=1.13,<2.0" "sqlalchemy[asyncio]>=2.0,<3.0"
       - run: python -m pip install -e . --no-deps
       - run: npm ci
         working-directory: frontend
@@ -52,11 +53,88 @@ jobs:
         working-directory: frontend
       - run: npm run build
         working-directory: frontend
+      - name: Dump npm audit report for diagnostics
+        # Always capture the full report (not just the high/critical gate below) so a
+        # failure is actionable even when a contributor's environment has no path to the
+        # npm registry to reproduce it locally. Emits each high/critical finding as a
+        # workflow annotation (visible via the Checks API/UI, unlike the raw log or the
+        # artifact zip, both served from a host some environments can't reach) in
+        # addition to the full JSON artifact.
+        if: always()
+        run: |
+          npm audit --json > npm-audit-report.json || true
+          node -e "
+            const r = JSON.parse(require('fs').readFileSync('npm-audit-report.json', 'utf8'));
+            const vulns = r.vulnerabilities || {};
+            for (const [name, v] of Object.entries(vulns)) {
+              if (v.severity !== 'high' && v.severity !== 'critical') continue;
+              const via = (v.via || [])
+                .map((x) => (typeof x === 'string' ? x : \`\${x.name}: \${x.title} (\${x.url})\`))
+                .join(' | ');
+              console.log(\`::warning title=npm audit\\: \${name} (\${v.severity})::range=\${v.range} fixAvailable=\${JSON.stringify(v.fixAvailable)} via=\${via}\`);
+            }
+          "
+        working-directory: frontend
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: npm-audit-report
+          path: frontend/npm-audit-report.json
+          retention-days: 14
       - run: npm audit --audit-level=high
         working-directory: frontend
       - run: python -m ruff check .
-      - run: python -m mypy .
-      - run: python -m pytest
+      - name: mypy
+        run: |
+          set -o pipefail
+          python -m mypy . 2>&1 | tee mypy-output.txt
+        continue-on-error: true
+        id: mypy
+      - name: Surface mypy errors as annotations and fail if it failed
+        if: steps.mypy.outcome == 'failure'
+        run: |
+          grep -E ': (error|note):' mypy-output.txt | while IFS= read -r line; do
+            echo "::error::${line}"
+          done
+          exit 1
+      - name: Backend test suite (JUnit results are kept as an artifact)
+        run: |
+          mkdir -p test-results
+          python -m pytest -q -rs --junitxml=test-results/junit.xml
+      - name: Test summary (fails if database/Redis tests were silently skipped)
+        if: always()
+        run: |
+          {
+            echo "## Backend tests"
+            echo
+            python scripts/evidence_summary.py junit test-results/junit.xml \
+              --fail-on-skip 'No PostgreSQL|ART_REDIS_TEST_URL|unreachable|Docker daemon|cannot pull|could not start|did not (become|open)'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: test-results
+          path: test-results/junit.xml
+          retention-days: 30
+      - name: Lab demo (must reproduce the committed findings digest)
+        run: python -m art_sim.demo --out evidence/demo --quiet
+      - name: Verify the demo's audit hash chain
+        run: python scripts/verify_audit_log.py evidence/demo/audit/security.jsonl
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: lab-demo
+          path: |
+            evidence/demo/report.html
+            evidence/demo/report.md
+            evidence/demo/findings.json
+            evidence/demo/findings.sha256
+            evidence/demo/before.svg
+            evidence/demo/after.svg
+            evidence/demo/REPRODUCIBLE.sha256
+            evidence/demo/audit/security.jsonl
+            evidence/demo/audit/verification.txt
+          retention-days: 30
       - run: python -m bandit -c pyproject.toml -r src
       - run: python -m pip_audit -r requirements.lock
       - run: python -m pip wheel --no-deps --wheel-dir dist .
@@ -124,6 +202,7 @@ jobs:
       - name: Build non-root runtime image
         run: docker build --tag art-sim:${{ github.sha }} .
       - name: Scan image vulnerabilities
+        id: scan
         uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
         with:
           image: art-sim:${{ github.sha }}
@@ -132,6 +211,11 @@ jobs:
           severity-cutoff: high
           only-fixed: true
           output-format: sarif
+      - name: Show blocking findings
+        if: failure() && steps.scan.outputs.sarif != ''
+        run: |
+          jq -r '.runs[].results[] | "\(.level)\t\(.ruleId)\t\(.message.text | split("\n")[0])"' \
+            "${{ steps.scan.outputs.sarif }}" | sort -u | head -60
       - name: Generate container SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:

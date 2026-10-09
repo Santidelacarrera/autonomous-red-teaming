@@ -4,9 +4,9 @@
 
 | Suite | Command | Result |
 | --- | --- | --- |
-| Backend | `.\.venv\Scripts\python.exe -m pytest -q` | PASS — 122 |
+| Backend | `python -m pytest -q` (or `bash scripts/reproduce.sh`) | PASS — 600 passed, 2 skipped, with real PostgreSQL 16 and Redis 7 (2026-10-09; the historical 122-test baseline below predates Phases 10-16) |
 | Ruff | `.\.venv\Scripts\python.exe -m ruff check .` | PASS |
-| Mypy strict | `.\.venv\Scripts\python.exe -m mypy .` | PASS — 97 files |
+| Mypy strict | `python -m mypy .` | PASS — 162 files |
 | Frontend | `npm test -- --run` | PASS — 20 tests / 8 files |
 | Frontend lint | `npm run lint` | PASS |
 | Frontend typecheck | `npm run typecheck` | PASS |
@@ -20,8 +20,24 @@
 | Container runtime security | inspect + `/proc/1/status` + write probes | PASS — UID 10001, zero capabilities, NNP/seccomp, read-only rootfs |
 | Image scan | Grype 0.119.0, threshold `high` | FAIL — 0 Critical, 50 High, exit 2 |
 | Image SBOM | Syft 1.52.0 CycloneDX 1.7 | PASS — 2,941 named/ref components |
-| Gitleaks | CI secret-scan job | NOT EXECUTED locally — CLI unavailable |
+| Gitleaks | `scripts/reproduce.sh` (Go-built v8.18.4) and CI `gitleaks-action` | PASS locally (full history); CI gate unchanged |
 | GitHub artifact provenance | commit-pinned CI attestation step | CONFIGURED — NOT EXECUTED in hosted CI |
+
+## Added 2026-10-09
+
+| Suite | Tests | What it proves |
+|---|---:|---|
+| `tests/security/test_approval_controls.py` | 30 | review window (incl. boundary), permissions, replay, HMAC signature tampering |
+| `tests/security/test_org_isolation.py` | 51 | tenant mediation on all 11 run routes, role matrix, OIDC organization claim |
+| `tests/security/test_audit_integrity.py` | 21 | gaps, duplicates, edits, reordering, torn writes, truncation, SIEM loss/duplication |
+| `tests/integration/test_state_integrity.py` | 95 | invalid transitions leave all tables unchanged (SQLite + PostgreSQL) |
+| `tests/integration/test_checkpoint_recovery.py` | 6 | mid-graph crash recovery equals an uninterrupted run |
+| `tests/unit/test_checkpoint_serde.py`, `test_risk_explain.py` | 9 + 14 | checkpoint allow-list; risk justification reconciles with the score |
+| `tests/integration/test_demo.py` | 14 | the demo is deterministic, honest, self-contained and self-checking |
+| Real services: `test_postgres_*`, Redis suites, `test_otel_collector.py`, `test_vault_real.py` | — | see [integrations.md](integrations.md) |
+
+Tests that need a service **skip visibly** (never pass silently) and CI fails when they were
+skipped: see `scripts/evidence_summary.py junit --fail-on-skip`.
 
 ## Coverage by invariant
 
@@ -38,7 +54,8 @@
 | Message schema/deduplication/retry/poison/DLQ | distributed execution tests |
 | One owner/lease expiry/heartbeat/fencing/stale worker | concurrency/recovery tests |
 | Cancellation idempotency and transition race | distributed + API integration tests |
-| Checkpoint missing/corrupt/restart in waiting/resuming | operational store + worker tests |
+| Checkpoint missing/corrupt/restart in waiting/resuming | operational store + worker tests; mid-graph crash recovery; wiped / rotated-secret checkpoints fail closed |
+| Approval expiry / organization isolation / audit chain | see docs/security-controls.md |
 | Result version conflict/rollback/immutable publication | distributed execution tests |
 | External readiness outages | Phase 13 controlled failure-injection tests |
 | Frontend protected routes/roles/polling/cancellation/states | Vitest suite |

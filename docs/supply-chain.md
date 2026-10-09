@@ -2,7 +2,11 @@
 
 ## Implemented controls
 
-- `requirements.lock`: exact application + development dependency versions.
+- `requirements.lock`: exact application + development dependency versions, **complete**: it
+  is compiled with `pip-compile --extra=dev` under the Python version CI uses (3.12) and must
+  contain everything the test suite imports. Regenerate it in a `python:3.12` container, not on a
+  developer's OS (a lock compiled on Windows once carried `colorama`). `scripts/reproduce.sh`
+  installs from it alone, so a missing pin fails reproduction instead of hiding in CI.
 - `requirements-runtime.lock`: exact runtime-only dependency versions used by Docker.
 - `frontend/package-lock.json`: exact npm dependency graph installed with `npm ci`.
 - multi-stage Docker build installs the runtime lock and the local wheel with `--no-deps`;
@@ -77,6 +81,6 @@ added; CI installs `alembic`/`sqlalchemy` ad hoc until the lock is regenerated w
 access (see `.github/workflows/ci.yml`).
 
 The previous Python 3.12.12/Bookworm base produced 16 Critical and 124 High matches. A
-comparative migration to the current digest-pinned Python 3.13.15/Trixie base eliminated
+comparative migration to the current digest-pinned Python 3.13.16/Trixie base eliminated
 all Critical matches and reduced High matches to 50. The remaining findings have not been
 accepted or suppressed, so supply-chain promotion remains blocked.

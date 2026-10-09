@@ -36,6 +36,8 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config
 
+from art_sim.security.secrets import ExternalSecretProvider
+
 
 async def _resolve_dsn() -> str:
     pre_resolved = os.environ.get("ART_DATABASE_DSN")
@@ -50,6 +52,7 @@ async def _resolve_dsn() -> str:
             "ART_DATABASE_DSN_SECRET_NAME so this script can resolve it"
         )
 
+    provider: ExternalSecretProvider
     if provider_name == "mounted":
         from art_sim.adapters.mounted_secret_provider import MountedSecretsProvider
 

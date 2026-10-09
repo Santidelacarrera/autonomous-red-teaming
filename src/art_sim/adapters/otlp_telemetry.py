@@ -12,7 +12,10 @@ module requires them. Core domain and API code never import it.
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, ClassVar
+from urllib.parse import urlsplit
 
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.trace import TracerProvider
@@ -32,6 +35,33 @@ if TYPE_CHECKING:
     from opentelemetry.metrics import Counter, Histogram
 
 _INSTRUMENTATION_SCOPE = "art-sim"
+_PROBE_TIMEOUT_SECONDS = 3.0
+
+Probe = Callable[[], Awaitable[None]]
+
+
+async def _tcp_probe(host: str, port: int) -> None:
+    """Prove the collector accepts connections, without sending any telemetry."""
+    try:
+        _, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port), timeout=_PROBE_TIMEOUT_SECONDS
+        )
+    except (OSError, TimeoutError) as error:
+        raise DependencyUnavailableError("Telemetry backend is unavailable") from error
+    writer.close()
+    await writer.wait_closed()
+
+
+async def _http_probe(url: str) -> None:
+    """Query the collector's own health endpoint (e.g. the ``health_check`` extension)."""
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT_SECONDS) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+    except httpx.HTTPError as error:
+        raise DependencyUnavailableError("Telemetry backend is unavailable") from error
 
 
 def _to_unix_nanos(seconds_epoch: float) -> int:
@@ -44,8 +74,20 @@ class OtlpTelemetrySink:
 
     deployment_capability: ClassVar[TelemetryCapability] = TelemetryCapability.EXTERNAL
 
-    def __init__(self, meter_provider: MeterProvider, tracer_provider: TracerProvider) -> None:
-        """Inject fully-configured OTel providers (deployment owns the exporters)."""
+    def __init__(
+        self,
+        meter_provider: MeterProvider,
+        tracer_provider: TracerProvider,
+        *,
+        probe: Probe | None = None,
+    ) -> None:
+        """Inject fully-configured OTel providers (deployment owns the exporters).
+
+        ``probe`` is an optional reachability check run by ``health_check``. It exists because
+        OpenTelemetry's ``force_flush`` swallows export failures: without a probe, readiness
+        would report healthy while every metric and span was being dropped.
+        """
+        self._probe = probe
         self._meter_provider = meter_provider
         self._tracer_provider = tracer_provider
         meter = meter_provider.get_meter(_INSTRUMENTATION_SCOPE)
@@ -60,9 +102,17 @@ class OtlpTelemetrySink:
 
     @classmethod
     def from_endpoint(
-        cls, endpoint: str, *, headers: Mapping[str, str] | None = None
+        cls,
+        endpoint: str,
+        *,
+        headers: Mapping[str, str] | None = None,
+        health_url: str | None = None,
     ) -> OtlpTelemetrySink:
-        """Build providers wired to an OTLP/HTTP collector owned by the deployment."""
+        """Build providers wired to an OTLP/HTTP collector owned by the deployment.
+
+        Readiness probes ``health_url`` when given, otherwise opens (and closes) a TCP
+        connection to the collector endpoint.
+        """
         from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
         from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
@@ -79,7 +129,15 @@ class OtlpTelemetrySink:
                 OTLPSpanExporter(endpoint=f"{base}/v1/traces", headers=dict(headers or {}))
             )
         )
-        return cls(meter_provider, tracer_provider)
+        parts = urlsplit(endpoint)
+        if health_url is not None:
+            probe: Probe = lambda: _http_probe(health_url)
+        elif parts.hostname:
+            host, port = parts.hostname, parts.port or (443 if parts.scheme == "https" else 4318)
+            probe = lambda: _tcp_probe(host, port)
+        else:
+            raise ValueError("OTLP endpoint must include a host")
+        return cls(meter_provider, tracer_provider, probe=probe)
 
     async def emit_metric(self, event: MetricEvent) -> None:
         """Record one bounded metric as an OTel counter add or histogram observation."""
@@ -117,7 +175,9 @@ class OtlpTelemetrySink:
             raise DependencyUnavailableError("Telemetry backend is unavailable") from error
 
     async def health_check(self) -> None:
-        """Flush both pipelines so readiness reflects real exporter availability."""
+        """Probe the collector, then flush both pipelines, so readiness reflects reality."""
+        if self._probe is not None:
+            await self._probe()
         try:
             self._meter_provider.force_flush()
             self._tracer_provider.force_flush()

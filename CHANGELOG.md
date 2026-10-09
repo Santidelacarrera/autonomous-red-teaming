@@ -6,6 +6,42 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Breaking
+- **Organization (tenant) isolation.** OIDC tokens must now carry a verified organization claim
+  (`org_id`, or `ART_OIDC_ORGANIZATION_CLAIM`); a token without it is rejected. Deployments that
+  do not issue the claim must opt in explicitly with `ART_OIDC_DEFAULT_ORGANIZATION=<id>`.
+  Run records gain `organization_id` (rows written before this default to `default`).
+  Idempotency keys are now namespaced per organization, so a client retrying a request created
+  *before* the upgrade may create one new run.
+- The durable security-audit file is now hash-chained envelopes (`seq`, `prev`, `hash`, `event`).
+  Readers accept the previous one-event-per-line format; new lines are chained.
+
+### Fixed
+- **Migration `0001` failed on PostgreSQL**: seven `CREATE TABLE` in one statement are rejected
+  by asyncpg, so the Helm migration Job could never have succeeded.
+- `SiemForwardAuditSink.close()` raised `CancelledError` on every graceful shutdown.
+- OTLP telemetry readiness reported healthy with the collector unreachable.
+- `scripts/backup_restore_drill.sh` raced the PostgreSQL image's temporary init server.
+- `migrations/env.py` disabled every other logger in the process.
+- CI gates that were red: strict mypy (5 errors) and Bandit (2 findings).
+
+### Added (2026-10-09 validation pass)
+- **Approval review window**: `approval_ttl` enforced inside the decision compare-and-set;
+  HTTP 410 `APPROVAL_EXPIRED`; `ART_APPROVAL_TTL_SECONDS` (production default 24 h).
+- **Tamper-evident audit**: hash chain, `scripts/verify_audit_log.py`, SIEM reconciliation.
+- **Checkpoint deserialization allow-list** for LangGraph state.
+- **Lab demo**: `python -m art_sim.demo` — one command, synthetic estate, before/after graph,
+  explained risk score, human approval, audit evidence, reproducible report ([docs/demo.md](docs/demo.md)).
+- **Clean-clone reproduction**: `scripts/reproduce.sh` + evidence bundle ([docs/reproducibility.md](docs/reproducibility.md)).
+- **Integration verification** against real PostgreSQL, Redis, OpenTelemetry Collector and Vault,
+  and the AWS Secrets Manager API via `moto` ([docs/integrations.md](docs/integrations.md)).
+- Tests: approval controls, organization/role matrix, audit integrity, lifecycle integrity on
+  SQLite and PostgreSQL, mid-graph checkpoint recovery.
+- `Dockerfile`: optional BuildKit `ca_bundle` secret (TLS-intercepting proxies) and
+  `OS_UPGRADE` build arg (default `true`; `false` yields a non-releasable local image).
+- `requirements.lock` regenerated and now complete (it was missing alembic, SQLAlchemy, boto3,
+  hvac, moto and respx).
+
 ### Security
 - Container image now closes every fixable OS CVE: the runtime stage runs `apt-get upgrade`
   (66 High → 0 fixable High/Critical), and `.grype.yaml` enforces an `only-fixed`, fail-on
