@@ -92,7 +92,7 @@ jobs:
       - name: Surface mypy errors as annotations and fail if it failed
         if: steps.mypy.outcome == 'failure'
         run: |
-          grep -E ': error:' mypy-output.txt | while IFS= read -r line; do
+          grep -E ': (error|note):' mypy-output.txt | while IFS= read -r line; do
             echo "::error::${line}"
           done
           exit 1

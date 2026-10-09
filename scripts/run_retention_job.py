@@ -30,6 +30,7 @@ from art_sim.adapters.postgres_store import PostgresOperationalStore
 from art_sim.platform.production_config import DataRetentionSettings
 from art_sim.retention.job import RetentionJob
 from art_sim.security.audit import AuditRetentionPolicy
+from art_sim.security.secrets import ExternalSecretProvider
 
 
 async def _resolve_dsn() -> str:
@@ -43,6 +44,7 @@ async def _resolve_dsn() -> str:
             "Set ART_DATABASE_DSN directly, or ART_SECRET_PROVIDER + "
             "ART_DATABASE_DSN_SECRET_NAME so this script can resolve it"
         )
+    provider: ExternalSecretProvider
     if provider_name == "mounted":
         from art_sim.adapters.mounted_secret_provider import MountedSecretsProvider
 

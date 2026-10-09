@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from art_sim.platform.production_config import DataRetentionSettings
 from art_sim.retention.job import RetentionJob
-from art_sim.security.audit import SecurityAuditEvent, SecurityEventType
+from art_sim.security.audit import AuditDurability, SecurityAuditEvent, SecurityEventType
 
 
 class FakeRetentionStore:
@@ -43,6 +43,8 @@ class FakeRetentionBroker:
 
 
 class FakeAuditSink:
+    durability = AuditDurability.VOLATILE
+
     def __init__(self) -> None:
         self.events: list[SecurityAuditEvent] = []
 
@@ -157,4 +159,4 @@ def test_report_counts_cannot_be_negative(field: str) -> None:
     }
     kwargs[field] = -1
     with pytest.raises(ValidationError):
-        RetentionRunReport(**kwargs)
+        RetentionRunReport(**kwargs)  # type: ignore[arg-type]
