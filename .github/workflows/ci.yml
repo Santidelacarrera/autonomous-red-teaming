@@ -83,7 +83,19 @@ jobs:
       - run: npm audit --audit-level=high
         working-directory: frontend
       - run: python -m ruff check .
-      - run: python -m mypy .
+      - name: mypy
+        run: |
+          set -o pipefail
+          python -m mypy . 2>&1 | tee mypy-output.txt
+        continue-on-error: true
+        id: mypy
+      - name: Surface mypy errors as annotations and fail if it failed
+        if: steps.mypy.outcome == 'failure'
+        run: |
+          grep -E ': error:' mypy-output.txt | while IFS= read -r line; do
+            echo "::error::${line}"
+          done
+          exit 1
       - run: python -m pytest
       - run: python -m bandit -c pyproject.toml -r src
       - run: python -m pip_audit -r requirements.lock
