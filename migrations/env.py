@@ -27,7 +27,9 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Keep the host process's loggers: the default (disable_existing_loggers=True) would silence
+    # every logger created before migrations ran, including application and library loggers.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = None
 
