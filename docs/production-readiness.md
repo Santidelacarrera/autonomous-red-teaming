@@ -52,7 +52,7 @@ monitoring backend, managed databases) are exactly the ones this repository cann
 | Python dependency lock | VALIDATED | `requirements.lock` was incomplete (alembic, SQLAlchemy, boto3, hvac, moto, respx were installed ad hoc); regenerated with `pip-compile` on Python 3.12.15 without changing existing pins. Clean `python:3.12` container, lock only: ruff, mypy, 586 tests pass; `pip-audit`: no known vulnerabilities. `requirements-runtime.lock` unchanged | Lock regeneration tooling | 2026-10-09 |
 | npm dependency lock | VALIDATED | `frontend/package-lock.json`, tests/build/audit | npm registry during build | 2026-09-24 |
 | Source SBOM and artifact hashes | VALIDATED | regenerated CycloneDX documents + 5 verified SHA-256 entries | No | 2026-09-24 |
-| Immutable Docker base reference | VALIDATED | Python 3.13.15/Trixie manifest-list digest resolved, pinned and built | Registry availability during build | 2026-09-24 |
+| Immutable Docker base reference | VALIDATED | Python 3.13.16/Trixie manifest-list digest resolved, pinned and built | Registry availability during build | 2026-09-24 |
 | Immutable GitHub Action references | VALIDATED | every `uses:` entry pinned to a resolved full commit SHA | GitHub Actions availability | 2026-09-24 |
 | Container image build | VALIDATED | local pinned multi-stage build; image `sha256:e730eeb95a5b66f98e4c29ae0ff3aa72775a836270a0fafe1a2f212194934d72` | No | 2026-09-24 |
 | Container runtime hardening | VALIDATED | UID 10001, read-only rootfs, zero capabilities, no-new-privileges, seccomp, limits and SIGTERM exit 0 | Orchestrator must reproduce the tested flags | 2026-09-24 |

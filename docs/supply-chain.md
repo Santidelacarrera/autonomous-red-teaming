@@ -81,6 +81,6 @@ added; CI installs `alembic`/`sqlalchemy` ad hoc until the lock is regenerated w
 access (see `.github/workflows/ci.yml`).
 
 The previous Python 3.12.12/Bookworm base produced 16 Critical and 124 High matches. A
-comparative migration to the current digest-pinned Python 3.13.15/Trixie base eliminated
+comparative migration to the current digest-pinned Python 3.13.16/Trixie base eliminated
 all Critical matches and reduced High matches to 50. The remaining findings have not been
 accepted or suppressed, so supply-chain promotion remains blocked.

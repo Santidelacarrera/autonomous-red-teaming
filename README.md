@@ -512,7 +512,7 @@ docker run --rm --read-only `
 ```
 
 The multi-stage image installs the runtime lock only, runs as UID/GID 10001, excludes
-`.env`, defines `/health`, and uses `SIGTERM`. Python 3.13.15/Trixie is pinned by immutable
+`.env`, defines `/health`, and uses `SIGTERM`. Python 3.13.16/Trixie is pinned by immutable
 manifest-list digest. The validated invocation used a read-only root filesystem, tmpfs at
 `/tmp` and `/app/var`, zero capabilities, `no-new-privileges`, seccomp and bounded PID/CPU/
 memory. Health and readiness returned 200 and SIGTERM exited 0. The runtime stage runs
