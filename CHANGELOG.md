@@ -24,6 +24,32 @@ All notable changes to this project are documented here. The format is based on
   `shadow` profile) and a `Makefile` task runner.
 - MIT `LICENSE` with a non-binding defensive-use notice.
 - `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, this changelog, issue/PR templates, `CODEOWNERS`, and `.editorconfig`.
+- **Real production secret adapters**: `AwsSecretsManagerProvider` (AWS Secrets Manager)
+  and `VaultSecretProvider` (HashiCorp Vault KV v2), implementing `ExternalSecretProvider`
+  alongside the existing `MountedSecretsProvider`.
+- **Direct SIEM audit forwarding**: `SiemForwardAuditSink` composes durable local capture
+  with best-effort, retried HTTP delivery to a SIEM/HEC endpoint, never losing an event to
+  a SIEM outage.
+- **Versioned PostgreSQL migrations**: Alembic (`migrations/`, `scripts/run_migrations.py`,
+  a Helm pre-install/pre-upgrade hook `Job`), replacing ad hoc `CREATE TABLE IF NOT EXISTS`
+  as the production schema-evolution path. `PostgresOperationalStore.initialize()` remains
+  as a dev/bootstrap convenience.
+- **Automated data-retention purge job**: `art_sim.retention.job.RetentionJob`, PostgreSQL
+  purge methods (`purge_expired_runs`/`_checkpoints`/`_results`) and
+  `RedisStreamsBrokerTransport.purge_dead_letter`, enforcing the `ART_*_RETENTION_DAYS`
+  policy table in `docs/data-retention.md` for the first time, with dry-run support, an
+  audit event per run, and a Helm `CronJob` (disabled by default).
+- **Executable disaster-recovery drill**: `scripts/backup_restore_drill.sh` runs the
+  documented backup → failure → restore → verify procedure against disposable PostgreSQL
+  containers it creates itself, scheduled weekly in `.github/workflows/dr-drill.yml`.
+- **TLS edge configuration**: a Helm `Ingress` template (cert-manager annotations) and a
+  Caddy `docker-compose` overlay for non-Kubernetes deployments, documented in
+  `docs/tls-edge.md`.
+- **Independent container-provenance verification**: the container image is now pushed to
+  GHCR by digest and attested (`attest-container`); a separate `verify-container-provenance`
+  CI job and `scripts/verify_image_provenance.py` re-verify that attestation independently
+  (a deploy pipeline or operator can run the same script against the digest it is about to
+  promote) — see `docs/supply-chain.md`.
 
 ### Changed
 - README elevated with badges, a 60-second quickstart, a verified-operational section, and

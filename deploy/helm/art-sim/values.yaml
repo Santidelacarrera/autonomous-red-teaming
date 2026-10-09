@@ -52,6 +52,21 @@ service:
   type: ClusterIP
   port: 8080
 
+# TLS edge termination at the Kubernetes Ingress, matching ART_TLS_TERMINATED_UPSTREAM=true
+# and ART_TRUSTED_PROXY_HOPS. See docs/tls-edge.md. Disabled by default: the chart does not
+# assume cert-manager or a particular ingress controller are installed.
+ingress:
+  enabled: false
+  className: nginx
+  host: art-sim.example.com
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-production
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/backend-protocol: HTTP
+  tls:
+    enabled: true
+    secretName: art-sim-tls
+
 resources:
   requests:
     cpu: 250m
@@ -93,3 +108,19 @@ containerSecurityContext:
 nodeSelector: {}
 tolerations: []
 affinity: {}
+
+# Runs `python scripts/run_migrations.py upgrade head` as a pre-install/pre-upgrade Helm
+# hook Job, so the versioned schema is migrated before any pod starts against it. See
+# docs/migrations.md. Requires the image to be built with the `migrations` extra installed.
+migrations:
+  enabled: true
+  backoffLimit: 2
+  activeDeadlineSeconds: 300
+
+# Runs `python scripts/run_retention_job.py --execute` on a schedule, enforcing the
+# ART_*_RETENTION_DAYS policy from docs/data-retention.md. Disabled by default: an operator
+# must confirm the configured retention windows match the organization's policy first.
+retention:
+  enabled: false
+  schedule: "17 3 * * *"
+  activeDeadlineSeconds: 1800

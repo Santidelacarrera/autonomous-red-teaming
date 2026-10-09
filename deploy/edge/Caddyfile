@@ -1,0 +1,32 @@
+# TLS edge for the docker-compose.prod.yml stack. Caddy terminates TLS (automatic ACME
+# certificate issuance/renewal against Let's Encrypt, or a provided certificate — see
+# docs/tls-edge.md) and forwards one hop of plaintext HTTP to the API container on the
+# compose network, matching ART_TLS_TERMINATED_UPSTREAM=true and ART_TRUSTED_PROXY_HOPS=1.
+#
+# Set ART_PUBLIC_HOSTNAME before starting the edge service, e.g.:
+#   ART_PUBLIC_HOSTNAME=art-sim.example.com docker compose -f docker-compose.prod.yml \
+#     -f deploy/edge/docker-compose.edge.yml up -d
+
+{$ART_PUBLIC_HOSTNAME} {
+	encode gzip
+
+	# Caddy already sets X-Forwarded-For/Proto/Host for the upstream; the API's
+	# ART_TRUSTED_PROXY_HOPS=1 trusts exactly this one hop and no more.
+	reverse_proxy api:8080 {
+		header_up Host {host}
+	}
+
+	# Defense in depth on top of the application's own HSTS/security headers
+	# (ART_HSTS_ENABLED=true) — the edge should not be the weakest link.
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

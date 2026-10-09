@@ -502,6 +502,64 @@ class PostgresOperationalStore:
             raise OperationalStoreError("Simulation review integrity check failed")
         return SimulationReview.model_validate_json(payload)
 
+    # ---- retention purge (RetentionPurgeStore; see art_sim.retention.job) --------------
+
+    async def purge_expired_runs(self, *, older_than: datetime, dry_run: bool) -> int:
+        """Delete terminal runs (and every dependent row) last updated before ``older_than``."""
+        terminal = [status.value for status in SimulationRunStateMachine.TERMINAL]
+        async with self._pool.acquire() as conn, conn.transaction():
+            rows = await conn.fetch(
+                "SELECT run_id FROM simulation_runs WHERE status = ANY($1::text[]) "
+                "AND updated_at < $2 FOR UPDATE SKIP LOCKED",
+                terminal, older_than,
+            )
+            run_ids = [row["run_id"] for row in rows]
+            if dry_run or not run_ids:
+                return len(run_ids)
+            for table in (
+                "simulation_reviews",
+                "simulation_results",
+                "workflow_checkpoints",
+                "worker_leases",
+                "audit_events",
+                "api_idempotency",
+            ):
+                await conn.execute(f"DELETE FROM {table} WHERE run_id = ANY($1::uuid[])", run_ids)
+            await conn.execute("DELETE FROM simulation_runs WHERE run_id = ANY($1::uuid[])", run_ids)
+            return len(run_ids)
+
+    async def purge_expired_checkpoints(self, *, older_than: datetime, dry_run: bool) -> int:
+        """Delete checkpoints of terminal runs created before ``older_than``."""
+        terminal = [status.value for status in SimulationRunStateMachine.TERMINAL]
+        async with self._pool.acquire() as conn, conn.transaction():
+            rows = await conn.fetch(
+                "SELECT wc.run_id FROM workflow_checkpoints wc "
+                "JOIN simulation_runs sr ON sr.run_id = wc.run_id "
+                "WHERE sr.status = ANY($1::text[]) AND wc.created_at < $2 FOR UPDATE OF wc SKIP LOCKED",
+                terminal, older_than,
+            )
+            run_ids = [row["run_id"] for row in rows]
+            if dry_run or not run_ids:
+                return len(run_ids)
+            await conn.execute("DELETE FROM workflow_checkpoints WHERE run_id = ANY($1::uuid[])", run_ids)
+            return len(run_ids)
+
+    async def purge_expired_results(self, *, older_than: datetime, dry_run: bool) -> int:
+        """Delete result artifacts of terminal runs created before ``older_than``."""
+        terminal = [status.value for status in SimulationRunStateMachine.TERMINAL]
+        async with self._pool.acquire() as conn, conn.transaction():
+            rows = await conn.fetch(
+                "SELECT res.run_id FROM simulation_results res "
+                "JOIN simulation_runs sr ON sr.run_id = res.run_id "
+                "WHERE sr.status = ANY($1::text[]) AND res.created_at < $2 FOR UPDATE OF res SKIP LOCKED",
+                terminal, older_than,
+            )
+            run_ids = [row["run_id"] for row in rows]
+            if dry_run or not run_ids:
+                return len(run_ids)
+            await conn.execute("DELETE FROM simulation_results WHERE run_id = ANY($1::uuid[])", run_ids)
+            return len(run_ids)
+
     # ---- lifecycle ---------------------------------------------------------------------
 
     async def health_check(self) -> None:

@@ -47,6 +47,7 @@ class SecurityEventType(StrEnum):
     RESULT_PUBLISHED = "simulation.result_published"
     SECURITY_CONFIGURATION_FAILURE = "security.configuration_failure"
     ADMIN_READ = "admin.security_read"
+    DATA_RETENTION_PURGED = "compliance.data_retention_purged"
 
 
 class AuditRetentionPolicy(BaseModel):

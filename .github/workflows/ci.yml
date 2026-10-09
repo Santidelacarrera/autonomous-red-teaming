@@ -34,6 +34,13 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -r requirements.lock pip-audit cyclonedx-bom bandit
+      # alembic/SQLAlchemy back the versioned-migration tests (docs/migrations.md) and are
+      # not yet in requirements.lock's resolved graph (regenerating that lock needs network
+      # this environment did not have when these adapters were added — see
+      # docs/supply-chain.md's evidence boundary). boto3/hvac are intentionally NOT
+      # installed here: the AWS/Vault adapter tests use hand-written fakes and skip their
+      # `from_region`/`from_url` factory paths when the real SDK is absent.
+      - run: python -m pip install "alembic>=1.13,<2.0" "sqlalchemy[asyncio]>=2.0,<3.0"
       - run: python -m pip install -e . --no-deps
       - run: npm ci
         working-directory: frontend
@@ -91,14 +98,27 @@ jobs:
 
   secret-scan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
+        env:
+          # gitleaks-action requires GITHUB_TOKEN to scan pull_request events (it was
+          # failing with "GITHUB_TOKEN is now required to scan pull requests" on this PR's
+          # own CI run); push events didn't need it, which is why this only showed up here.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   container:
     runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+      image_ref: ${{ steps.ref.outputs.image_ref }}
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Build non-root runtime image
@@ -119,3 +139,71 @@ jobs:
           syft-version: v1.52.0
           format: cyclonedx-json
           output-file: container-sbom.cdx.json
+      - name: Compute the image reference
+        id: ref
+        run: echo "image_ref=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        # Plain `docker login`, not a third-party action: this repository pins every
+        # `uses:` entry to a resolved commit SHA (docs/supply-chain.md), and a login step
+        # needs no action at all when the CLI itself can read the token from stdin.
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Push the scanned image by digest
+        id: push
+        if: github.event_name == 'push'
+        run: |
+          docker tag art-sim:${{ github.sha }} ${{ steps.ref.outputs.image_ref }}:${{ github.sha }}
+          docker push ${{ steps.ref.outputs.image_ref }}:${{ github.sha }}
+          digest="$(docker inspect --format='{{index .RepoDigests 0}}' ${{ steps.ref.outputs.image_ref }}:${{ github.sha }} | cut -d'@' -f2)"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
+  attest-container:
+    # Independence (docs/supply-chain.md): this is a SEPARATE job from `container`, with its
+    # own minimal permission grant, that attests provenance for the exact digest `container`
+    # pushed — it does not re-build the image, so the attestation is bound to the artifact
+    # that was actually scanned and pushed, not to a second, possibly-different build.
+    if: github.event_name == 'push'
+    needs: container
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      attestations: write
+      packages: write
+    steps:
+      - name: Log in to GHCR
+        # push-to-registry: true below pushes the attestation as an OCI referrer of the
+        # image, which needs its own registry credentials in THIS job (attest-container
+        # does not inherit the `container` job's login). Plain `docker login`, consistent
+        # with the `container` job, for the same pinned-action reason noted there.
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Attest container image provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-name: ${{ needs.container.outputs.image_ref }}
+          subject-digest: ${{ needs.container.outputs.digest }}
+          push-to-registry: true
+
+  verify-container-provenance:
+    # Independent verification gate (docs/supply-chain.md): re-derives trust from scratch —
+    # a fresh job, downloading nothing from the jobs above, using only the public image
+    # reference+digest and the repository identity — to prove the digest a deployment would
+    # pull really does carry a valid, repository-scoped build-provenance attestation. This
+    # is the check scripts/verify_image_provenance.py also exposes for a deploy pipeline or
+    # an operator to run independently of CI, against whatever digest is about to be
+    # promoted.
+    if: github.event_name == 'push'
+    needs: [container, attest-container]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: none
+      attestations: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Verify provenance independently of the attesting job
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/verify_image_provenance.py \
+            "${{ needs.container.outputs.image_ref }}@${{ needs.container.outputs.digest }}" \
+            --repo "${{ github.repository }}"
