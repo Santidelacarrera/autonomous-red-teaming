@@ -23,7 +23,8 @@
 #   --out DIR            evidence directory (default: evidence)
 #   --venv DIR           virtualenv location (default: .repro/venv)
 #   --python BIN         interpreter to use (default: python3; needs >= 3.11, 3.12 recommended)
-#   --require-services   fail if PostgreSQL/Redis were unavailable or their tests were skipped
+#   --require-services   fail if PostgreSQL/Redis were unavailable, or any test that needs a real
+#                        service (PostgreSQL, Redis, Docker-based Collector/Vault) was skipped
 #   --strict             treat every DEGRADED step as a failure
 #   --skip-frontend      do not run the Node/npm steps
 #   --skip-audit         do not run pip-audit (it needs network access)
@@ -184,7 +185,7 @@ log "running the backend test suite (this takes about a minute)"
 PYTEST_STATUS=$?
 tail -n 4 "${EVIDENCE}/pytest.txt"
 SKIP_PATTERN=""
-[ "${REQUIRE_SERVICES}" = 1 ] && SKIP_PATTERN='No PostgreSQL|ART_REDIS_TEST_URL|unreachable'
+[ "${REQUIRE_SERVICES}" = 1 ] && SKIP_PATTERN='No PostgreSQL|ART_REDIS_TEST_URL|unreachable|Docker daemon|cannot pull|could not start|did not (become|open)'
 if [ -f "${EVIDENCE}/junit.xml" ]; then
   "${PY}" scripts/evidence_summary.py junit "${EVIDENCE}/junit.xml" ${SKIP_PATTERN:+--fail-on-skip "${SKIP_PATTERN}"} \
     > "${EVIDENCE}/junit-summary.md" 2>&1

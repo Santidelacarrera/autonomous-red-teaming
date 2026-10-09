@@ -33,7 +33,8 @@ its release binary — see below).
 
 **DEGRADED is never hidden.** If, say, no Docker daemon is available, the database tests are
 skipped by pytest — the verdict becomes `PASSED WITH REDUCED COVERAGE` and says why. Use
-`--require-services` to make that a failure, `--strict` to fail on *any* degraded step.
+`--require-services` to make that a failure (it fails if any PostgreSQL, Redis or Docker-based
+Collector/Vault test was skipped), `--strict` to fail on *any* degraded step.
 
 ### What the evidence bundle contains
 

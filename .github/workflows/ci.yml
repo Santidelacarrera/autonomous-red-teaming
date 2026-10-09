@@ -108,7 +108,7 @@ jobs:
             echo "## Backend tests"
             echo
             python scripts/evidence_summary.py junit test-results/junit.xml \
-              --fail-on-skip 'No PostgreSQL|ART_REDIS_TEST_URL|unreachable'
+              --fail-on-skip 'No PostgreSQL|ART_REDIS_TEST_URL|unreachable|Docker daemon|cannot pull|could not start|did not (become|open)'
           } | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
