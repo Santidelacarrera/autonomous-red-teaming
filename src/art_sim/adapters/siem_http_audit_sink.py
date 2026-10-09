@@ -162,7 +162,11 @@ class SiemForwardAuditSink:
             self._forwarder_task.cancel()
             try:
                 await self._forwarder_task
-            except Exception:  # noqa: BLE001, S110 - cancellation outcome is intentionally ignored
+            except asyncio.CancelledError:
+                # ``CancelledError`` is a ``BaseException``: awaiting a task we just cancelled
+                # always raises it, and that is the expected, successful shutdown outcome.
+                pass
+            except Exception:  # noqa: BLE001, S110 - a failed forwarder must not block shutdown
                 pass
             self._forwarder_task = None
         await self._durable.close()

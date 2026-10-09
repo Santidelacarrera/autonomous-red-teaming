@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 import pytest
@@ -23,7 +23,7 @@ from art_sim.security.audit import (
 class FakeDurableSink:
     """In-memory stand-in for ``JsonlDurableSecurityAuditSink``."""
 
-    durability = AuditDurability.DURABLE
+    durability: ClassVar[AuditDurability] = AuditDurability.DURABLE
 
     def __init__(self) -> None:
         self.retention_policy = AuditRetentionPolicy(retention_days=30)
