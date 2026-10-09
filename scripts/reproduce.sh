@@ -120,7 +120,10 @@ run_step "bandit" bandit.txt "${PY}" -m bandit -q -c pyproject.toml -r src
 if [ "${SKIP_AUDIT}" = 1 ]; then
   record "pip-audit" SKIP "--skip-audit"
 else
-  if "${PY}" -m pip_audit -r requirements.lock --progress-spinner off > "${EVIDENCE}/pip-audit.txt" 2>&1; then
+  # pip-audit is a scanner, not a dependency of the product, so it is deliberately not in the
+  # lock: install the current release on demand (its job is to know today's advisories).
+  "${PY}" -m pip install -q --disable-pip-version-check pip-audit > "${EVIDENCE}/pip-audit.txt" 2>&1
+  if "${PY}" -m pip_audit -r requirements.lock --progress-spinner off >> "${EVIDENCE}/pip-audit.txt" 2>&1; then
     record "pip-audit" PASS "$(tail -n1 "${EVIDENCE}/pip-audit.txt")"
   else
     record "pip-audit" FAIL "see ${EVIDENCE}/pip-audit.txt (needs network access to PyPI/OSV)"

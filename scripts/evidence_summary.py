@@ -35,7 +35,7 @@ from pathlib import Path
 def _parse_junit(path: Path) -> dict[str, object]:
     root = ET.parse(path).getroot()
     suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
-    totals = Counter()
+    totals: Counter[str] = Counter()
     failures: list[str] = []
     skips: Counter[str] = Counter()
     duration = 0.0
@@ -68,8 +68,10 @@ def _junit_markdown(result: dict[str, object]) -> str:
     lines = [
         "| Tests | Passed | Failed | Skipped | Duration |",
         "|---:|---:|---:|---:|---:|",
-        f"| {result['tests']} | {result['passed']} | {result['failed']} | {result['skipped']} | "
-        f"{result['duration_seconds']} s |",
+        (
+            f"| {result['tests']} | {result['passed']} | {result['failed']} | {result['skipped']} | "
+            f"{result['duration_seconds']} s |"
+        ),
     ]
     failures = result["failures"]
     if failures:
@@ -96,8 +98,8 @@ def cmd_junit(args: argparse.Namespace) -> int:
 
 def _git(*args: str) -> str:
     try:
-        return subprocess.run(  # noqa: S603
-            ["git", *args], capture_output=True, text=True, check=True  # noqa: S607
+        return subprocess.run(
+            ["git", *args], capture_output=True, text=True, check=True
         ).stdout.strip()
     except (OSError, subprocess.CalledProcessError):
         return "unavailable"

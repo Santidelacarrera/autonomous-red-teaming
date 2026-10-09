@@ -67,6 +67,17 @@ APPROVE_BODY = {
 Narrate = Callable[[str], None]
 
 
+class DemoInvariantError(RuntimeError):
+    """The demonstration reached a state that contradicts the product's guarantees."""
+
+
+def _require(condition: bool, message: str) -> None:
+    """Fail loudly. Unlike ``assert`` this still runs under ``python -O``, and the demo's
+    claims (the gate was not bypassed, the worker paused where it must) are the whole point."""
+    if not condition:
+        raise DemoInvariantError(message)
+
+
 class _Clock:
     """Wall clock the demo can advance to show a review window closing."""
 
@@ -191,7 +202,7 @@ async def run_lab(out: Path, narrate: Narrate = lambda _: None) -> DemoEvidence:
         run_id = UUID(created.json()["run_id"])
         narrate("[2/6] Worker analyzes the graph, scores risk and pauses at the human gate")
         outcome = await worker.run(run_id)
-        assert outcome is WorkerRunResult.WAITING_APPROVAL, outcome
+        _require(outcome is WorkerRunResult.WAITING_APPROVAL, f"worker returned {outcome}")
         run_path = f"/api/v1/simulations/{run_id}"
         review_response = await call(
             "Read review package (viewer)", VIEWER, "GET", f"{run_path}/review", 200,
@@ -216,7 +227,7 @@ async def run_lab(out: Path, narrate: Narrate = lambda _: None) -> DemoEvidence:
         await call("Cross-organization read", OUTSIDER, "GET", run_path, 404,
                    "foreign run indistinguishable from missing", label="/{run}")
         gated = await store.get_run(run_id)
-        assert gated.status is SimulationRunStatus.WAITING_APPROVAL, "gate was bypassed"
+        _require(gated.status is SimulationRunStatus.WAITING_APPROVAL, "the human gate was bypassed")
 
         # -------------------------------------------------------------- 3. human approval
         narrate("[4/6] Authorized operator alice approves the countermeasure")
@@ -224,7 +235,7 @@ async def run_lab(out: Path, narrate: Narrate = lambda _: None) -> DemoEvidence:
                    "decision recorded atomically", body=APPROVE_BODY, label="/{run}/approval")
         narrate("[5/6] Worker verifies the HMAC-signed approval, applies it to a graph copy, publishes")
         outcome = await worker.run(run_id)
-        assert outcome is WorkerRunResult.SUCCEEDED, outcome
+        _require(outcome is WorkerRunResult.SUCCEEDED, f"worker returned {outcome}")
         await call("Replayed approval", OPERATOR, "POST", approve_path, 409,
                    "first decision is final", body=APPROVE_BODY, label="/{run}/approval")
         await call("Read verified report (viewer)", VIEWER, "GET", f"{run_path}/report", 200,
@@ -239,13 +250,17 @@ async def run_lab(out: Path, narrate: Narrate = lambda _: None) -> DemoEvidence:
         second = await call("Create second simulation", OPERATOR, "POST", "/api/v1/simulations", 202,
                             "run accepted", body={"scenario_id": LAB_SCENARIO_ID})
         second_id = UUID(second.json()["run_id"])
-        assert await worker.run(second_id) is WorkerRunResult.WAITING_APPROVAL
+        second_outcome = await worker.run(second_id)
+        _require(second_outcome is WorkerRunResult.WAITING_APPROVAL, f"worker returned {second_outcome}")
         clock.now += APPROVAL_TTL + timedelta(minutes=1)
         second_path = f"/api/v1/simulations/{second_id}"
         await call("Approval after the window closed", OPERATOR, "POST", f"{second_path}/approval", 410,
                    "expired decision refused", body=APPROVE_BODY, label="/{run}/approval")
         expired_run = await store.get_run(second_id)
-        assert expired_run.status is SimulationRunStatus.WAITING_APPROVAL
+        _require(
+            expired_run.status is SimulationRunStatus.WAITING_APPROVAL,
+            "an expired approval changed the run",
+        )
         await call("Cancel the expired run", OPERATOR, "POST", f"{second_path}/cancel", 200,
                    "stale review is retired, never auto-approved", label="/{run}/cancel")
         expired_run = await store.get_run(second_id)
@@ -262,7 +277,7 @@ async def run_lab(out: Path, narrate: Narrate = lambda _: None) -> DemoEvidence:
     lines = audit_path.read_text(encoding="utf-8").splitlines()
     tampered.write_text("\n".join(lines[:3] + lines[4:]) + "\n", encoding="utf-8")
     tamper_report = verify_audit_log(tampered)
-    assert durable_event_ids(audit_path), "audit log is empty"
+    _require(bool(durable_event_ids(audit_path)), "the audit log is empty")
 
     removed = _removed_edge(review)
     explanation = explain_risk(review.attack_path, graph.assets, review.risk)

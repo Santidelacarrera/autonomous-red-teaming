@@ -31,6 +31,7 @@ No cloud SIEM SDK is required: delivery uses the project's existing ``httpx`` de
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import Mapping
 from enum import StrEnum
 from typing import ClassVar
@@ -160,13 +161,10 @@ class SiemForwardAuditSink:
         """Stop forwarding (best-effort drain), then close the durable sink."""
         if self._forwarder_task is not None:
             self._forwarder_task.cancel()
-            try:
+            # ``CancelledError`` is a ``BaseException``: awaiting a task we just cancelled always
+            # raises it, and that is the expected, successful shutdown outcome. Any other error
+            # from the forwarder must not block closing the durable sink either.
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._forwarder_task
-            except asyncio.CancelledError:
-                # ``CancelledError`` is a ``BaseException``: awaiting a task we just cancelled
-                # always raises it, and that is the expected, successful shutdown outcome.
-                pass
-            except Exception:  # noqa: BLE001, S110 - a failed forwarder must not block shutdown
-                pass
             self._forwarder_task = None
         await self._durable.close()

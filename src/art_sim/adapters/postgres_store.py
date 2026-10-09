@@ -229,8 +229,10 @@ class PostgresOperationalStore:
             clauses.append(f"COALESCE((payload::jsonb)->>'organization_id','default')=${len(parameters)}")
         where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
         parameters.extend((limit, offset))
+        # `where` is assembled only from the constant fragments above plus `$n` placeholders;
+        # every caller-supplied value travels in `parameters`, never in the SQL text.
         query = (
-            f"SELECT payload FROM simulation_runs {where}"
+            f"SELECT payload FROM simulation_runs {where}"  # nosec B608
             f"ORDER BY updated_at DESC, run_id DESC LIMIT ${len(parameters) - 1} OFFSET ${len(parameters)}"
         )
         async with self._pool.acquire() as conn:
@@ -557,7 +559,11 @@ class PostgresOperationalStore:
                 "audit_events",
                 "api_idempotency",
             ):
-                await conn.execute(f"DELETE FROM {table} WHERE run_id = ANY($1::uuid[])", run_ids)
+                # `table` iterates the constant tuple above; run IDs are bound as a parameter.
+                await conn.execute(
+                    f"DELETE FROM {table} WHERE run_id = ANY($1::uuid[])",  # nosec B608
+                    run_ids,
+                )
             await conn.execute("DELETE FROM simulation_runs WHERE run_id = ANY($1::uuid[])", run_ids)
             return len(run_ids)
 
