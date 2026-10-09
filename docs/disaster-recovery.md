@@ -14,6 +14,12 @@ seeded run's terminal status, and the recovered `alembic_version` all match. Run
 on demand, in `.github/workflows/dr-drill.yml`, so regression in restore mechanics is
 caught before it is needed in production, not during an actual incident.
 
+The drill **was executed on 2026-10-09 and passed** (`DR_DRILL_RESULT=PASS`: migrations applied
+through the real script, seeded rows and `alembic_version` identical after an isolated restore,
+backup checksum recorded). Its first run failed on a readiness race inside the script itself
+(the official postgres image restarts after a temporary init server); that is fixed. The weekly
+hosted run in `.github/workflows/dr-drill.yml` has not yet been observed.
+
 This covers the database leg of the procedure end-to-end. The broker/DLQ, SIEM/audit
 archive and secret-manager legs below remain an operator procedure against the selected
 vendor service, because this repository does not operate those services.

@@ -7,8 +7,8 @@ from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from uuid import uuid4
 
-import fakeredis.aioredis as fakeredis
 import pytest
+from redis.asyncio import Redis
 
 from art_sim.adapters.redis_streams_broker import (
     RedisStreamsBrokerTransport,
@@ -34,8 +34,10 @@ def _job(scenario: str = "shadow-demo", attempt: int = 1) -> SimulationJobV1:
 
 
 @pytest.fixture
-async def broker() -> AsyncGenerator[tuple[RedisStreamsBrokerTransport, RedisStreamsJobConsumer]]:
-    client = fakeredis.FakeRedis()
+async def broker(
+    redis_client: Redis,
+) -> AsyncGenerator[tuple[RedisStreamsBrokerTransport, RedisStreamsJobConsumer]]:
+    client = redis_client
     transport = RedisStreamsBrokerTransport(client, FAST)
     consumer = RedisStreamsJobConsumer(client, "worker-1", FAST)
     yield transport, consumer

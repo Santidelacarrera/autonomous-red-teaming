@@ -11,3 +11,6 @@ frontend/.env.local
 var/
 deploy/secrets/*
 !deploy/secrets/README.md
+.repro/
+evidence/
+out/

@@ -108,6 +108,8 @@ class SecuritySettings(BaseModel):
                 jwks_url=jwks_url or "",
                 mfa_claim=mfa_claim,
                 mfa_values=mfa_values,
+                organization_claim=os.getenv("ART_OIDC_ORGANIZATION_CLAIM", "org_id"),
+                default_organization_id=os.getenv("ART_OIDC_DEFAULT_ORGANIZATION") or None,
             )
         origins = tuple(value.strip() for value in os.getenv("ART_CORS_ALLOWED_ORIGINS", "").split(",") if value.strip())
         try:

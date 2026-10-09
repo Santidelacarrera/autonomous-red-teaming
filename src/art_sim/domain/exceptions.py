@@ -73,6 +73,14 @@ class ApprovalRequiredError(GraphEngineError):
     """Raised when a remediation workflow attempts to bypass human approval."""
 
 
+class ApprovalExpiredError(ApprovalRequiredError):
+    """Raised when a human decision arrives after the review window has closed.
+
+    A subclass of ``ApprovalRequiredError`` so every existing fail-closed handler still
+    rejects the decision; the API maps it to a distinct ``APPROVAL_EXPIRED`` response.
+    """
+
+
 class VerificationError(GraphEngineError):
     """Raised when post-remediation verification cannot analyze the simulated graph."""
 

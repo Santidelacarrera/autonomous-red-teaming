@@ -25,6 +25,21 @@ enabled HSTS and rate limiting. Sensitive approval can require an explicit
 `ART_OIDC_MFA_CLAIM` plus accepted `ART_OIDC_MFA_VALUES`. Development auth, wildcard
 CORS, HTTP origins, shared-secret JWT algorithms and incomplete OIDC config fail closed.
 
+**Organization (tenant) claim.** Every verified token must carry the claim named by
+`ART_OIDC_ORGANIZATION_CLAIM` (default `org_id`; value `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`);
+a token without it, or with a malformed one, is rejected. A single-tenant deployment whose IdP
+does not issue the claim must opt in with `ART_OIDC_DEFAULT_ORGANIZATION=<id>`; the
+organization is never inferred and never read from request data. **This is a breaking change
+for OIDC deployments that predate tenant isolation** — see the changelog.
+
+**Review window.** `ART_APPROVAL_TTL_SECONDS` (60 – 2 592 000; production default 86 400,
+development default: open-ended) bounds how long a paused simulation may wait for a human.
+A decision after the window is refused (HTTP 410, `approval.expired` audit event); the run is
+never auto-approved and can only be cancelled.
+
+**Telemetry readiness.** `ART_OTLP_HEALTH_URL` (optional) is probed by readiness instead of a
+plain TCP connection to `ART_OTLP_ENDPOINT`.
+
 ## Production dependencies
 
 `ProductionDependencySettings.from_environment()` consumes:

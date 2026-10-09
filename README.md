@@ -16,7 +16,7 @@
   <img alt="FastAPI" src="https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white">
   <img alt="LangGraph" src="https://img.shields.io/badge/workflow-LangGraph-1C3C3C">
   <img alt="React" src="https://img.shields.io/badge/UI-React%20%2B%20Vite-61DAFB?logo=react&logoColor=black">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-261%20backend%20%2F%2020%20frontend-success">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-600%20backend%20%2F%2020%20frontend-success">
   <img alt="Type checked" src="https://img.shields.io/badge/mypy-strict-blue">
   <img alt="Security" src="https://img.shields.io/badge/security-bandit%20%7C%20pip--audit%20%7C%20gitleaks%20%7C%20grype-critical">
   <img alt="Container scan" src="https://img.shields.io/badge/image%20scan-0%20fixable%20high-success">
@@ -31,6 +31,23 @@ engine, or an autonomous offensive tool. Production adapter *contracts* are pres
 services are never represented as connected when they are not.
 
 ---
+
+### ▶ See it, then check it yourself — two commands
+
+```bash
+python -m art_sim.demo --out out/demo      # offline, no credentials, simulation only → out/demo/report.html
+bash scripts/reproduce.sh --with-docker    # fresh venv from the lock, real PostgreSQL/Redis, full suite,
+                                           # frontend, gitleaks, demo digest check → evidence/SUMMARY.md
+```
+
+The demo runs the real stack against a **fictional** 11-asset estate, shows the attack graph
+**before and after** an approved control, explains the risk score factor by factor, tries to
+bypass the human gate in six ways (all must fail), records the approval and a hash-chained
+audit trail, and ends with a digest an outside reviewer can compare to the one committed here.
+See [docs/demo.md](docs/demo.md), [docs/reproducibility.md](docs/reproducibility.md),
+[docs/security-controls.md](docs/security-controls.md) and
+[docs/integrations.md](docs/integrations.md) (what is verified against real services, and what is
+explicitly still pending).
 
 ### ⚡ TL;DR — run the full pipeline in ~60 seconds
 
@@ -382,9 +399,11 @@ accepted work and close injected dependencies.
 ## 17. Testing
 
 The local audit executes unit, integration, security, concurrency, recovery,
-frontend and controlled Shadow E2E suites. The current verified count is **261 backend
-tests** and **20 frontend tests**; Ruff, strict Mypy (100 Python files), `bandit` (0
-findings), frontend lint/typecheck/build, `pip-audit`, and `npm audit` pass. The pinned Docker image builds,
+frontend and controlled Shadow E2E suites. The current verified count (2026-10-09, from a fresh
+clone, real PostgreSQL 16 and Redis 7) is **600 backend tests passed, 2 skipped** and **20
+frontend tests**; Ruff, strict Mypy (162 Python files), `bandit` (0 findings), frontend
+lint/typecheck/build, `pip-audit`, `npm audit` and a full-history Gitleaks scan pass.
+`bash scripts/reproduce.sh` regenerates this evidence and lists every skip with its reason. The pinned Docker image builds,
 runs under the hardened invocation, passes local health/readiness and shuts down cleanly.
 The Grype image scan now **passes** the configured `high` gate: the runtime stage applies
 `apt-get upgrade`, closing every OS CVE with an available fix (**0 fixable High/Critical**),
@@ -397,7 +416,12 @@ single documented disposition for a CPython CVE whose only fix is a pre-release.
 Targeted tests cover OIDC/JWT/JWKS rotation, issuer/audience/time/algorithm checks, RBAC,
 MFA, approval HMAC and replay/CAS behavior, secret redaction, process-vs-distributed
 capabilities, lease expiry, fencing, stale workers, duplicate delivery, poison jobs,
-cancellation races, result publication races, checkpoint corruption and restart recovery.
+cancellation races, result publication races, checkpoint corruption and restart recovery —
+and, since the 2026-10-09 validation pass, approval **expiry**, organization **isolation**,
+signature tampering/replay, **lifecycle integrity** (invalid transitions change nothing, on
+SQLite and PostgreSQL), mid-graph **crash recovery**, and a **tamper-evident audit log**
+(gaps/duplicates/edits/truncation, SIEM reconciliation). Each control is listed with its positive
+and negative tests in [docs/security-controls.md](docs/security-controls.md).
 
 ## 19. Threat Model
 
@@ -436,13 +460,15 @@ audit/telemetry boundaries, TLS edge contract, Anchore gates and GitHub provenan
 
 ### Not yet validated
 
-Multi-region recovery remains unimplemented. Concrete adapters, migrations, the retention
-job, the backup/restore drill, and hosted container-provenance verification are now
-implemented and unit/integration-tested in this sandbox, but have not yet been exercised
-against this sandbox's PostgreSQL/Redis service or GitHub's hosted runners — see Phase 15
-in [`docs/production-readiness.md`](docs/production-readiness.md) for exactly what was and
-was not run. The image scan was executed but failed; its High findings require remediation
-or formal review rather than being treated as unvalidated.
+Multi-region recovery remains unimplemented. PostgreSQL (incl. migrations and the executed
+backup/restore drill), Redis (broker, limiter, DLQ), an OpenTelemetry Collector and Vault are now
+verified against **real servers**, and AWS Secrets Manager against its API emulation; see
+[`docs/integrations.md`](docs/integrations.md) for the exact evidence and for the list that is
+**explicitly still pending** — above all a live OIDC tenant that issues a trustworthy
+organization claim, a production SIEM, a real monitoring backend and managed databases. Helm
+rendering, hosted-CI runs of the DR drill and container-provenance verification, and the Grype
+gate (which needs the Debian mirrors a restricted network can deny) were not observed from this
+environment.
 
 ## 21. Operational Runbooks
 
@@ -486,7 +512,7 @@ docker run --rm --read-only `
 ```
 
 The multi-stage image installs the runtime lock only, runs as UID/GID 10001, excludes
-`.env`, defines `/health`, and uses `SIGTERM`. Python 3.13.15/Trixie is pinned by immutable
+`.env`, defines `/health`, and uses `SIGTERM`. Python 3.13.16/Trixie is pinned by immutable
 manifest-list digest. The validated invocation used a read-only root filesystem, tmpfs at
 `/tmp` and `/app/var`, zero capabilities, `no-new-privileges`, seccomp and bounded PID/CPU/
 memory. Health and readiness returned 200 and SIGTERM exited 0. The runtime stage runs
