@@ -98,6 +98,21 @@ def shadow_scenario_catalog() -> tuple[SimulationScenario, ...]:
                 RelationshipType.ASSUMES_ROLE,
             ),
         ),
+        _linear_scenario(
+            "shadow-container-breakout",
+            (AssetType.KUBERNETES_WORKLOAD, AssetType.KUBERNETES_NODE, AssetType.SECRET),
+            (RelationshipType.CONTAINER_ESCAPE, RelationshipType.CREDENTIAL_ACCESS),
+        ),
+        _linear_scenario(
+            "shadow-iam-privilege-chain",
+            (AssetType.COMPUTE, AssetType.IAM_ROLE, AssetType.DATABASE),
+            (RelationshipType.IAM_ASSUME_ROLE, RelationshipType.ACCESS),
+        ),
+        _linear_scenario(
+            "shadow-credential-harvest",
+            (AssetType.SYNTHETIC_CREDENTIAL, AssetType.IAM_ROLE, AssetType.SECRET),
+            (RelationshipType.CREDENTIAL_ACCESS, RelationshipType.ASSUMES_ROLE),
+        ),
     )
 
 

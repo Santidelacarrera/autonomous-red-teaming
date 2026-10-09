@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import UTC, datetime
 from time import monotonic
 from typing import Any, ClassVar
@@ -19,6 +20,7 @@ from tenacity import (
 
 from art_sim.domain.exceptions import AuthenticationError
 from art_sim.security.identity import (
+    ORGANIZATION_ID_PATTERN,
     ApiRole,
     AuthenticationContext,
     AuthenticationMethod,
@@ -42,6 +44,11 @@ class OidcSettings(BaseModel):
     clock_skew_seconds: int = Field(default=30, ge=0, le=300)
     mfa_claim: str | None = Field(default=None, pattern=r"^[A-Za-z][A-Za-z0-9_.:/-]{0,127}$")
     mfa_values: frozenset[str] = Field(default_factory=frozenset, max_length=32)
+    # Tenant isolation: the verified claim naming the caller's organization. A token without
+    # it is rejected unless the operator explicitly opts a single-tenant deployment into a
+    # fixed organization — the organization is never guessed or taken from request data.
+    organization_claim: str = Field(default="org_id", pattern=r"^[A-Za-z][A-Za-z0-9_.:/-]{0,127}$")
+    default_organization_id: str | None = Field(default=None, pattern=ORGANIZATION_ID_PATTERN)
 
     @field_validator("issuer", "jwks_url")
     @classmethod
@@ -209,11 +216,13 @@ class OidcIdentityProvider:
         roles = frozenset(ApiRole(role) for role in raw_roles if role in {item.value for item in ApiRole})
         if not roles:
             raise AuthenticationError("Authentication credential is invalid")
+        organization_id = self._organization(claims)
         mfa = self._mfa_satisfied(claims)
         auth_time = claims.get("auth_time", claims["iat"])
         return Identity(
             subject=str(claims["sub"]),
             issuer=self._settings.issuer,
+            organization_id=organization_id,
             roles=roles,
             permissions=permissions_for_roles(roles),
             authentication=AuthenticationContext(
@@ -225,6 +234,17 @@ class OidcIdentityProvider:
             token_id=str(claims["jti"]) if claims.get("jti") is not None else None,
             session_id=str(claims["sid"]) if claims.get("sid") is not None else None,
         )
+
+    def _organization(self, claims: dict[str, Any]) -> str:
+        """Return the verified organization claim, or fail closed when it is absent/invalid."""
+        value = claims.get(self._settings.organization_claim)
+        if value is None:
+            if self._settings.default_organization_id is not None:
+                return self._settings.default_organization_id
+            raise AuthenticationError("Authentication credential is invalid")
+        if not isinstance(value, str) or re.fullmatch(ORGANIZATION_ID_PATTERN, value) is None:
+            raise AuthenticationError("Authentication credential is invalid")
+        return value
 
     def _mfa_satisfied(self, claims: dict[str, Any]) -> bool:
         """Derive MFA only from a verified claim explicitly configured by the operator."""

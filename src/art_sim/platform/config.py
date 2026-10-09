@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
 
@@ -17,6 +19,24 @@ class RuntimeEnvironment(StrEnum):
     DEVELOPMENT = "development"
     STAGING = "staging"
     PRODUCTION = "production"
+
+
+def approval_ttl_from_environment(default_seconds: int | None) -> timedelta | None:
+    """Read ``ART_APPROVAL_TTL_SECONDS`` (60 s .. 30 d); unset uses ``default_seconds``.
+
+    Production passes a bounded default so an unattended review window can never stay open
+    forever; development passes ``None`` to keep the legacy open-ended behavior.
+    """
+    raw = os.getenv("ART_APPROVAL_TTL_SECONDS")
+    if raw is None:
+        return None if default_seconds is None else timedelta(seconds=default_seconds)
+    try:
+        seconds = int(raw)
+    except ValueError as error:
+        raise ConfigurationError("ART_APPROVAL_TTL_SECONDS must be an integer") from error
+    if not 60 <= seconds <= 30 * 86_400:
+        raise ConfigurationError("ART_APPROVAL_TTL_SECONDS must be between 60 and 2592000")
+    return timedelta(seconds=seconds)
 
 
 class OperationalSettings(BaseModel):

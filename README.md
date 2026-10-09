@@ -7,11 +7,16 @@
 > infrastructure.**
 
 <p>
+  <a href="https://github.com/Santidelacarrera/autonomous-red-teaming/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Santidelacarrera/autonomous-red-teaming/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/Santidelacarrera/autonomous-red-teaming/actions/workflows/codeql.yml"><img alt="CodeQL" src="https://github.com/Santidelacarrera/autonomous-red-teaming/actions/workflows/codeql.yml/badge.svg"></a>
+  <a href="https://github.com/Santidelacarrera/autonomous-red-teaming/actions/workflows/scorecard.yml"><img alt="Scorecard" src="https://github.com/Santidelacarrera/autonomous-red-teaming/actions/workflows/scorecard.yml/badge.svg"></a>
+</p>
+<p>
   <img alt="Python" src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776AB?logo=python&logoColor=white">
   <img alt="FastAPI" src="https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white">
   <img alt="LangGraph" src="https://img.shields.io/badge/workflow-LangGraph-1C3C3C">
   <img alt="React" src="https://img.shields.io/badge/UI-React%20%2B%20Vite-61DAFB?logo=react&logoColor=black">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-122%20backend%20%2F%2020%20frontend-success">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-600%20backend%20%2F%2020%20frontend-success">
   <img alt="Type checked" src="https://img.shields.io/badge/mypy-strict-blue">
   <img alt="Security" src="https://img.shields.io/badge/security-bandit%20%7C%20pip--audit%20%7C%20gitleaks%20%7C%20grype-critical">
   <img alt="Container scan" src="https://img.shields.io/badge/image%20scan-0%20fixable%20high-success">
@@ -26,6 +31,23 @@ engine, or an autonomous offensive tool. Production adapter *contracts* are pres
 services are never represented as connected when they are not.
 
 ---
+
+### ▶ See it, then check it yourself — two commands
+
+```bash
+python -m art_sim.demo --out out/demo      # offline, no credentials, simulation only → out/demo/report.html
+bash scripts/reproduce.sh --with-docker    # fresh venv from the lock, real PostgreSQL/Redis, full suite,
+                                           # frontend, gitleaks, demo digest check → evidence/SUMMARY.md
+```
+
+The demo runs the real stack against a **fictional** 11-asset estate, shows the attack graph
+**before and after** an approved control, explains the risk score factor by factor, tries to
+bypass the human gate in six ways (all must fail), records the approval and a hash-chained
+audit trail, and ends with a digest an outside reviewer can compare to the one committed here.
+See [docs/demo.md](docs/demo.md), [docs/reproducibility.md](docs/reproducibility.md),
+[docs/security-controls.md](docs/security-controls.md) and
+[docs/integrations.md](docs/integrations.md) (what is verified against real services, and what is
+explicitly still pending).
 
 ### ⚡ TL;DR — run the full pipeline in ~60 seconds
 
@@ -129,6 +151,7 @@ src/art_sim/
   api/              FastAPI routes, services and composition roots
   attack/           Shadow graph and deterministic risk calculation
   blast_radius/     Simulated impact calculation
+  adapters/         Opt-in production adapters (Redis limiter, OTLP, durable audit, secrets)
   domain/           Validated models, ports and domain exceptions
   infrastructure/   Neo4j/Cypher and review-only GitHub adapter
   observability/    Typed metrics, traces and logging boundaries
@@ -294,6 +317,17 @@ Copy-Item .env.example .env
 .\.venv\Scripts\python.exe -m uvicorn art_sim.api.main:app --reload --port 8080
 ```
 
+Or run the whole hardened stack in one command with Docker (add `--profile shadow` to also
+start a local Neo4j for the seed/E2E scripts):
+
+```bash
+docker compose up --build          # API on http://127.0.0.1:8080
+```
+
+A [`Makefile`](Makefile) wraps the common tasks (`make check` runs lint + typecheck +
+security + tests; `make docker-scan` builds and scans the image). On Windows, run it under
+Git Bash/WSL or use the PowerShell commands shown here.
+
 In another terminal:
 
 ```powershell
@@ -327,10 +361,22 @@ Internet
   -> Secret Manager + OIDC + Distributed Rate Limiter + SIEM + OpenTelemetry
 ```
 
-Every component after the application image is an external dependency. The repository
-does not deploy it. Production requires migrations before traffic, readiness gating,
-graceful drain, backup/restore verification, rollback to a compatible image/schema, and
-separate worker/API scaling. See [deployment](docs/deployment.md).
+The production ASGI entrypoint is `art_sim.api.serve`, which builds the fail-closed app from
+the real adapters via the composition root `art_sim.api.compose.build_production_app()`.
+
+- **Kubernetes:** a Helm chart under [`deploy/helm/art-sim`](deploy/helm/art-sim) deploys the
+  hardened image (non-root, read-only rootfs, dropped capabilities, seccomp), `/health` and
+  `/readiness` probes, an HPA, a PodDisruptionBudget, a restrictive NetworkPolicy, and a
+  projected secret volume. `helm lint` and `helm template` pass.
+- **Compose:** [`docker-compose.prod.yml`](docker-compose.prod.yml) runs the production app
+  wired to PostgreSQL, Redis (broker + limiter) and an OTLP collector. Validated end-to-end:
+  the container starts and `/readiness` reports `database`, `broker`, `secret_provider`,
+  `rate_limiter`, `audit` and `telemetry` all `ok` — only `identity_provider` needs a live
+  OIDC tenant.
+
+Every vendor service behind the application image is a deployment-owned dependency. Production
+still requires readiness gating, graceful drain, backup/restore verification, rollback to a
+compatible image/schema, and separate worker/API scaling. See [deployment](docs/deployment.md).
 
 ## 15. Observability
 
@@ -353,9 +399,11 @@ accepted work and close injected dependencies.
 ## 17. Testing
 
 The local audit executes unit, integration, security, concurrency, recovery,
-frontend and controlled Shadow E2E suites. The current verified count is **122 backend
-tests** and **20 frontend tests**; Ruff, strict Mypy (100 Python files), `bandit` (0
-findings), frontend lint/typecheck/build, `pip-audit`, and `npm audit` pass. The pinned Docker image builds,
+frontend and controlled Shadow E2E suites. The current verified count (2026-10-09, from a fresh
+clone, real PostgreSQL 16 and Redis 7) is **600 backend tests passed, 2 skipped** and **20
+frontend tests**; Ruff, strict Mypy (162 Python files), `bandit` (0 findings), frontend
+lint/typecheck/build, `pip-audit`, `npm audit` and a full-history Gitleaks scan pass.
+`bash scripts/reproduce.sh` regenerates this evidence and lists every skip with its reason. The pinned Docker image builds,
 runs under the hardened invocation, passes local health/readiness and shuts down cleanly.
 The Grype image scan now **passes** the configured `high` gate: the runtime stage applies
 `apt-get upgrade`, closing every OS CVE with an available fix (**0 fixable High/Critical**),
@@ -368,7 +416,12 @@ single documented disposition for a CPython CVE whose only fix is a pre-release.
 Targeted tests cover OIDC/JWT/JWKS rotation, issuer/audience/time/algorithm checks, RBAC,
 MFA, approval HMAC and replay/CAS behavior, secret redaction, process-vs-distributed
 capabilities, lease expiry, fencing, stale workers, duplicate delivery, poison jobs,
-cancellation races, result publication races, checkpoint corruption and restart recovery.
+cancellation races, result publication races, checkpoint corruption and restart recovery —
+and, since the 2026-10-09 validation pass, approval **expiry**, organization **isolation**,
+signature tampering/replay, **lifecycle integrity** (invalid transitions change nothing, on
+SQLite and PostgreSQL), mid-graph **crash recovery**, and a **tamper-evident audit log**
+(gaps/duplicates/edits/truncation, SIEM reconciliation). Each control is listed with its positive
+and negative tests in [docs/security-controls.md](docs/security-controls.md).
 
 ## 19. Threat Model
 
@@ -395,8 +448,10 @@ runtime, container health/readiness/SIGTERM and Syft image SBOM generation.
 
 ### Validated with external infrastructure
 
-None. No production vendor service or hosted attestation result was available to this
-audit.
+Hosted GitHub Actions: the `ci`, `codeql`, and `scorecard` workflows complete successfully
+on `main`, exercising the container build, Grype `high` gate, SBOMs, and the build-provenance
+attestation step on GitHub-hosted runners. No production vendor service (broker, database,
+secret manager, OIDC tenant, SIEM, telemetry) was connected; those remain deployment-owned.
 
 ### Ready with external dependency
 
@@ -405,9 +460,15 @@ audit/telemetry boundaries, TLS edge contract, Anchore gates and GitHub provenan
 
 ### Not yet validated
 
-Concrete production adapters, migrations, deployment, hosted provenance verification,
-backup/restore and multi-region recovery. The image scan was executed but failed; its High
-findings require remediation or formal review rather than being treated as unvalidated.
+Multi-region recovery remains unimplemented. PostgreSQL (incl. migrations and the executed
+backup/restore drill), Redis (broker, limiter, DLQ), an OpenTelemetry Collector and Vault are now
+verified against **real servers**, and AWS Secrets Manager against its API emulation; see
+[`docs/integrations.md`](docs/integrations.md) for the exact evidence and for the list that is
+**explicitly still pending** — above all a live OIDC tenant that issues a trustworthy
+organization claim, a production SIEM, a real monitoring backend and managed databases. Helm
+rendering, hosted-CI runs of the DR drill and container-provenance verification, and the Grype
+gate (which needs the Debian mirrors a restricted network can deny) were not observed from this
+environment.
 
 ## 21. Operational Runbooks
 
@@ -432,8 +493,11 @@ The release audit generated and validated local CycloneDX Python/frontend/image 
 a SHA-256 manifest under ignored `var/audit/`. Grype 0.119.0 and Syft 1.52.0 are versioned
 explicitly in CI; the local Grype result fails the `high` cutoff.
 All Actions use immutable commit SHAs. GitHub artifact provenance is configured for
-`push`, but remains unvalidated until a hosted workflow emits and independently verifies
-an attestation.
+`push` for release artifacts, and, for the container image specifically, is now generated
+and independently re-verified by a separate job (`attest-container` ->
+`verify-container-provenance`) in the same workflow — see
+[`docs/supply-chain.md`](docs/supply-chain.md) for what remains unexecuted until a hosted
+run actually happens.
 
 ## 23. Docker
 
@@ -448,7 +512,7 @@ docker run --rm --read-only `
 ```
 
 The multi-stage image installs the runtime lock only, runs as UID/GID 10001, excludes
-`.env`, defines `/health`, and uses `SIGTERM`. Python 3.13.15/Trixie is pinned by immutable
+`.env`, defines `/health`, and uses `SIGTERM`. Python 3.13.16/Trixie is pinned by immutable
 manifest-list digest. The validated invocation used a read-only root filesystem, tmpfs at
 `/tmp` and `/app/var`, zero capabilities, `no-new-privileges`, seccomp and bounded PID/CPU/
 memory. Health and readiness returned 200 and SIGTERM exited 0. The runtime stage runs
@@ -462,8 +526,13 @@ Ruff/Mypy/Pytest/audit/wheel, Gitleaks, SBOMs, artifact hashing, container build
 scanning and GitHub artifact attestation. A separate [`codeql.yml`](.github/workflows/codeql.yml)
 workflow runs `security-extended` static analysis on pushes, PRs and a weekly schedule, and
 [Dependabot](.github/dependabot.yml) opens grouped weekly dependency PRs. Third-party Actions
-are commit-pinned. A workflow definition is not proof of a successful hosted run; verify the
-workflow and attestation before promoting an artifact.
+are commit-pinned. The hosted pipeline is **green on GitHub Actions** for `main` — `ci`,
+`codeql`, and `scorecard` all complete successfully, including the container build, the Grype
+`high` gate, SBOM generation, and the build-provenance attestation step. The container image
+itself is now pushed to GHCR by digest, attested (`attest-container`), and independently
+re-verified by a separate `verify-container-provenance` job — `scripts/verify_image_provenance.py`
+runs the same `gh attestation verify` check and is meant to run again immediately before
+promoting a specific digest to a production cluster.
 
 ## 25. Failure Modes
 
@@ -494,20 +563,50 @@ security.
 
 ## 27. Known Limitations
 
-- No concrete Redis/RabbitMQ/Kafka/SQS transport is connected.
-- No PostgreSQL/equivalent operational-store adapter is implemented.
-- No AWS/Vault/GCP/Azure secret-manager adapter is connected.
-- No SIEM, OpenTelemetry/Prometheus, distributed limiter, or real OIDC tenant is connected.
-- TLS/API gateway/WAF, backups, retention jobs, multi-region coordination and deployment
-  are external.
+- Every application-side adapter now has at least one concrete implementation: a **Redis
+  distributed rate limiter** ([`redis_rate_limiter`](src/art_sim/adapters/redis_rate_limiter.py),
+  `pip install .[redis]`), an **OpenTelemetry/OTLP telemetry sink**
+  ([`otlp_telemetry`](src/art_sim/adapters/otlp_telemetry.py), `pip install .[telemetry]`), a
+  durable **append-only audit sink** ([`jsonl_audit_sink`](src/art_sim/adapters/jsonl_audit_sink.py))
+  plus a **direct SIEM-forwarding** variant
+  ([`siem_http_audit_sink`](src/art_sim/adapters/siem_http_audit_sink.py)), a path-traversal-safe
+  **mounted-secrets provider** ([`mounted_secret_provider`](src/art_sim/adapters/mounted_secret_provider.py))
+  plus **AWS Secrets Manager** and **HashiCorp Vault** adapters
+  ([`aws_secrets_manager_provider`](src/art_sim/adapters/aws_secrets_manager_provider.py)
+  `pip install .[aws]`,
+  [`vault_secret_provider`](src/art_sim/adapters/vault_secret_provider.py) `pip install .[vault]`),
+  a **Redis Streams broker** transport + consumer
+  ([`redis_streams_broker`](src/art_sim/adapters/redis_streams_broker.py); consumer groups,
+  visibility redelivery via `XAUTOCLAIM`, dead-letter stream + retention purge), and a
+  server-grade **PostgreSQL operational store**
+  ([`postgres_store`](src/art_sim/adapters/postgres_store.py); asyncpg, `FOR UPDATE` row
+  locks, leases/fencing/CAS, retention purge methods, `pip install .[postgres]`) with
+  versioned **Alembic migrations** (`migrations/`, `pip install .[migrations]`). GCP Secret
+  Manager and Azure Key Vault remain declared as provider enum values
+  (`SecretManagerProvider`) with no concrete adapter yet. What remains is connecting the
+  implemented adapters to live vendor services and a real OIDC tenant, which are
+  deployment-owned.
+- An **automated data-retention purge job** ([`art_sim.retention.job`](src/art_sim/retention/job.py))
+  now enforces the `ART_*_RETENTION_DAYS` policy table in
+  [`docs/data-retention.md`](docs/data-retention.md); it is dry-run by default and the Helm
+  `CronJob` that schedules it is disabled until an operator opts in.
+- An **executable disaster-recovery drill** ([`scripts/backup_restore_drill.sh`](scripts/backup_restore_drill.sh),
+  scheduled weekly) and **TLS edge configuration** (Helm `Ingress` + a Caddy compose
+  overlay, see [`docs/tls-edge.md`](docs/tls-edge.md)) replace what were previously only
+  written procedures.
+- The container image is now pushed to GHCR by digest, attested, and **independently
+  re-verified** by a separate CI job and [`scripts/verify_image_provenance.py`](scripts/verify_image_provenance.py)
+  — see [`docs/supply-chain.md`](docs/supply-chain.md) for what "independent" means here and
+  what is still only configured rather than executed against a hosted runner.
 - The runtime lock (`requirements-runtime.lock`, shipped in the image) is hash-complete and
   installed with `--require-hashes`; the dev/CI lock (`requirements.lock`) is exact-pinned
   but intentionally not hash-complete so ad-hoc CI tooling can be added on the same command.
+  The new adapters' dependencies (`boto3`, `hvac`, `alembic`, `sqlalchemy`) are declared in
+  `pyproject.toml`'s extras but not yet in `requirements.lock`'s resolved graph — see
+  `docs/supply-chain.md`.
 - The Grype image scan passes the `high` gate: the runtime stage applies `apt-get upgrade`
   (0 fixable High/Critical) and [.grype.yaml](.grype.yaml) fails only on fixable findings.
   Remaining matches are Medium/Low or OS CVEs with no upstream fix, tracked by severity.
-- GitHub artifact provenance is configured but has no hosted execution/verification
-  evidence; container provenance is not configured.
 
 ## 28. Roadmap
 
@@ -515,18 +614,24 @@ security.
 
 Simulation-only graph/agent workflow, HITL, API/UI, local durable worker, broker/database/
 secret/audit/telemetry/rate-limit contracts, production capability checks, readiness,
-failure/concurrency/recovery tests, lockfiles and CI supply-chain gates.
+failure/concurrency/recovery tests, lockfiles and CI supply-chain gates, concrete AWS
+Secrets Manager/Vault/mounted secret adapters, a direct-SIEM-forward audit sink, versioned
+PostgreSQL migrations, an automated data-retention purge job, an executable backup/restore
+drill, TLS edge configuration (Helm Ingress + Caddy overlay), and independently-verified
+container provenance.
 
 ### External Integration
 
-Implement and certify deployment-owned adapters, migrations, OIDC tenant, TLS edge,
-retention jobs, alerting, backups, restore drills and hosted CI evidence.
+Connect the implemented adapters to live vendor services (a real OIDC tenant, a production
+Postgres/Redis/Vault/AWS account, a real SIEM endpoint), run the new migration/retention/DR
+suites against them, execute the hosted `ci`/`dr-drill` workflows at least once, and
+regenerate `requirements.lock` with the new adapters' dependencies resolved.
 
 ### Future
 
-Multi-region ownership semantics, organization-specific compliance retention, container
-provenance, independent attestation verification and measured capacity/load targets.
-Future work must preserve simulation-only scope.
+Multi-region ownership semantics, organization-specific compliance retention beyond the
+generic day-count policy already enforced, GCP Secret Manager/Azure Key Vault adapters, and
+measured capacity/load targets. Future work must preserve simulation-only scope.
 
 ## 29. License
 

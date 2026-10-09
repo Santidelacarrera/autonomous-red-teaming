@@ -1,0 +1,32 @@
+# Overlay adding a TLS-terminating edge in front of the api service from
+# docker-compose.prod.yml. Usage:
+#
+#   ART_PUBLIC_HOSTNAME=art-sim.example.com \
+#   docker compose -f docker-compose.prod.yml -f deploy/edge/docker-compose.edge.yml up -d
+#
+# The api service's own port publication (127.0.0.1:8080) stays loopback-only; only the
+# edge is reachable from outside the host. See docs/tls-edge.md for the Kubernetes
+# (cert-manager + Ingress) equivalent.
+services:
+  edge:
+    image: caddy:2.9-alpine
+    depends_on:
+      api:
+        condition: service_started
+    environment:
+      ART_PUBLIC_HOSTNAME: ${ART_PUBLIC_HOSTNAME:?set ART_PUBLIC_HOSTNAME to the public DNS name}
+    ports:
+      - "80:80"
+      - "443:443"
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /config:rw,noexec,nosuid,nodev,size=16m
+    volumes:
+      - ./deploy/edge/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
