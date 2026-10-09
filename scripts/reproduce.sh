@@ -23,8 +23,8 @@
 #   --out DIR            evidence directory (default: evidence)
 #   --venv DIR           virtualenv location (default: .repro/venv)
 #   --python BIN         interpreter to use (default: python3; needs >= 3.11, 3.12 recommended)
-#   --require-services   fail if PostgreSQL/Redis tests were skipped
-#   --strict             treat DEGRADED as failure
+#   --require-services   fail if PostgreSQL/Redis were unavailable or their tests were skipped
+#   --strict             treat every DEGRADED step as a failure
 #   --skip-frontend      do not run the Node/npm steps
 #   --skip-audit         do not run pip-audit (it needs network access)
 #   --with-docker        also build and smoke-test the container image
@@ -60,7 +60,6 @@ while [ $# -gt 0 ]; do
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
-[ "${REQUIRE_SERVICES}" = 1 ] && STRICT=1
 
 rm -rf "${EVIDENCE}"
 mkdir -p "${EVIDENCE}" ".repro/bin"
@@ -172,6 +171,8 @@ else
 fi
 if [ -n "${ART_PG_TEST_DSN:-}" ] && [ -n "${ART_REDIS_TEST_URL:-}" ]; then
   record "services (PostgreSQL + Redis)" PASS "${PG_NOTE}; ${REDIS_NOTE}"
+elif [ "${REQUIRE_SERVICES}" = 1 ]; then
+  record "services (PostgreSQL + Redis)" FAIL "${PG_NOTE}; ${REDIS_NOTE} (--require-services)"
 else
   record "services (PostgreSQL + Redis)" DEGRADED "${PG_NOTE}; ${REDIS_NOTE} — dependent tests will be SKIPPED"
 fi

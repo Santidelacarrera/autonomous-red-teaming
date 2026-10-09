@@ -66,6 +66,20 @@ async def test_findings_digest_reproduces_the_committed_reference(first: tuple[P
     assert (first[0] / "findings.sha256").read_text().split()[0] == reference
 
 
+async def test_report_and_figures_match_the_committed_file_hashes(first: tuple[Path, str]) -> None:
+    """Stronger than the digest: the Markdown report and both SVG figures are byte-reproducible."""
+    committed = report.expected_hashes()
+    assert committed is not None, "run `python -m art_sim.demo --update-expected` and commit the result"
+    actual = {
+        name: digest
+        for digest, name in (
+            line.split() for line in (first[0] / "REPRODUCIBLE.sha256").read_text().splitlines()
+        )
+    }
+    assert set(committed) == set(report.REPRODUCIBLE_FILES)
+    assert actual == committed
+
+
 async def test_two_executions_produce_byte_identical_reproducible_files(
     first: tuple[Path, str], tmp_path: Path
 ) -> None:

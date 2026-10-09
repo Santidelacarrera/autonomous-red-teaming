@@ -25,6 +25,8 @@ from art_sim.demo.graph_svg import render_graph_svg
 from art_sim.demo.runner import DemoEvidence
 
 DIGEST_FILE = Path(__file__).with_name("expected_findings.sha256")
+HASHES_FILE = Path(__file__).with_name("expected_reproducible.sha256")
+REPRODUCIBLE_FILES = ("findings.json", "report.md", "before.svg", "after.svg")
 
 
 def _names(ev: DemoEvidence) -> dict[Any, str]:
@@ -145,6 +147,14 @@ def expected_digest() -> str | None:
     if not DIGEST_FILE.exists():
         return None
     return DIGEST_FILE.read_text(encoding="utf-8").split()[0]
+
+
+def expected_hashes() -> dict[str, str] | None:
+    """File hashes committed with the source (``sha256sum`` format), or ``None`` if absent."""
+    if not HASHES_FILE.exists():
+        return None
+    entries = (line.split() for line in HASHES_FILE.read_text(encoding="utf-8").splitlines() if line.strip())
+    return {name: digest for digest, name in entries}
 
 
 def figures(ev: DemoEvidence) -> tuple[str, str]:
@@ -485,9 +495,8 @@ def write_artifacts(ev: DemoEvidence, out: Path) -> tuple[str, dict[str, Path]]:
         encoding="utf-8",
     )
     # Hashes of the reproducible files only: a reviewer's run must match these byte for byte.
-    reproducible = ("findings.json", "report.md", "before.svg", "after.svg")
     (out / "REPRODUCIBLE.sha256").write_text(
-        "".join(f"{sha256(files[name].read_bytes()).hexdigest()}  {name}\n" for name in reproducible),
+        "".join(f"{sha256(files[name].read_bytes()).hexdigest()}  {name}\n" for name in REPRODUCIBLE_FILES),
         encoding="utf-8",
     )
     return digest, files

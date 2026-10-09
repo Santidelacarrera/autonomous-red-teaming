@@ -169,7 +169,7 @@ def cmd_final(args: argparse.Namespace) -> int:
         sums.append(f"{digest}  {path.relative_to(evidence).as_posix()}")
     (evidence / "SHA256SUMS").write_text("\n".join(sums) + "\n", encoding="utf-8")
 
-    print("\n".join(markdown[:12]))
+    print("\n".join(markdown[: markdown.index("## How to check this bundle") - 1]))
     print(f"\nVERDICT: {verdict}")
     return 1 if failed else 0
 
