@@ -49,9 +49,15 @@ cleanup() {
 trap cleanup EXIT
 
 wait_for_postgres() {
-  local container="$1"
-  for _ in $(seq 1 60); do
-    if docker exec "${container}" pg_isready -U postgres >/dev/null 2>&1; then
+  # The official postgres image starts a *temporary* server while initializing a fresh data
+  # directory (reachable only over its unix socket), stops it, then starts the real one.
+  # `docker exec pg_isready` succeeds during that first phase, so it races the restart and a
+  # client connecting right after sees "server closed the connection unexpectedly". Require the
+  # ready banner twice (temporary + final server) AND a successful TCP probe from the host.
+  local container="$1" port="$2" banners
+  for _ in $(seq 1 90); do
+    banners="$(docker logs "${container}" 2>&1 | grep -c 'database system is ready to accept connections' || true)"
+    if [ "${banners}" -ge 2 ] && pg_isready -h 127.0.0.1 -p "${port}" -U postgres >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
@@ -64,7 +70,7 @@ docker network create "${NETWORK}" >/dev/null
 docker run -d --name "${SOURCE_CONTAINER}" --network "${NETWORK}" \
   -e POSTGRES_PASSWORD="${PG_PASSWORD}" -e POSTGRES_DB="${DB_NAME}" \
   -p "${SOURCE_PORT}:5432" "${PG_IMAGE}" >/dev/null
-wait_for_postgres "${SOURCE_CONTAINER}"
+wait_for_postgres "${SOURCE_CONTAINER}" "${SOURCE_PORT}"
 
 SOURCE_DSN="postgresql://postgres:${PG_PASSWORD}@127.0.0.1:${SOURCE_PORT}/${DB_NAME}"
 
@@ -99,7 +105,7 @@ log "step 6/9: starting an isolated recovery PostgreSQL (separate identity/netwo
 docker run -d --name "${RECOVERY_CONTAINER}" --network "${NETWORK}" \
   -e POSTGRES_PASSWORD="${PG_PASSWORD}" -e POSTGRES_DB="${DB_NAME}" \
   -p "${RECOVERY_PORT}:5432" "${PG_IMAGE}" >/dev/null
-wait_for_postgres "${RECOVERY_CONTAINER}"
+wait_for_postgres "${RECOVERY_CONTAINER}" "${RECOVERY_PORT}"
 RECOVERY_DSN="postgresql://postgres:${PG_PASSWORD}@127.0.0.1:${RECOVERY_PORT}/${DB_NAME}"
 
 log "step 7/9: restoring the backup into the isolated recovery instance"

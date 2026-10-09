@@ -1,6 +1,7 @@
 # Developer task runner. On Windows, run these under Git Bash or WSL, or use the
 # equivalent PowerShell commands in the README. PY points at the project venv.
-PY ?= .venv/Scripts/python.exe
+# Interpreter: the project venv on Windows or Linux/macOS if present, else python3.
+PY ?= $(if $(wildcard .venv/Scripts/python.exe),.venv/Scripts/python.exe,$(if $(wildcard .venv/bin/python),.venv/bin/python,python3))
 IMAGE ?= art-sim:local
 IMAGE_REF ?= ghcr.io/santidelacarrera/autonomous-red-teaming@sha256:REPLACE_ME
 
@@ -8,7 +9,8 @@ IMAGE_REF ?= ghcr.io/santidelacarrera/autonomous-red-teaming@sha256:REPLACE_ME
 .PHONY: help setup install test lint typecheck security audit fmt run \
         frontend-install frontend-test frontend-build frontend-lint \
         docker-build docker-scan compose-up compose-down seed e2e check clean \
-        migrate migrate-current dr-drill retention-job retention-job-dry-run verify-provenance
+        migrate migrate-current dr-drill retention-job retention-job-dry-run verify-provenance \
+        demo reproduce verify-audit
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -91,6 +93,15 @@ retention-job-dry-run: ## Report what the retention purge job would delete, with
 
 verify-provenance: ## Independently verify a container image's build provenance attestation
 	$(PY) scripts/verify_image_provenance.py $(IMAGE_REF)
+
+demo: ## One-command synthetic lab demo -> out/demo/report.html (offline, simulation only)
+	$(PY) -m art_sim.demo --out out/demo
+
+reproduce: ## Reproduce and verify everything from a clean install -> evidence/SUMMARY.md
+	bash scripts/reproduce.sh
+
+verify-audit: ## Verify a durable audit log's hash chain: make verify-audit LOG=path/to/security.jsonl
+	$(PY) scripts/verify_audit_log.py $(LOG)
 
 check: lint typecheck security test ## Run the full backend quality gate
 
