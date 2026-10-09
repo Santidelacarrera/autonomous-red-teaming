@@ -1,0 +1,109 @@
+# Developer task runner. On Windows, run these under Git Bash or WSL, or use the
+# equivalent PowerShell commands in the README. PY points at the project venv.
+# Interpreter: the project venv on Windows or Linux/macOS if present, else python3.
+PY ?= $(if $(wildcard .venv/Scripts/python.exe),.venv/Scripts/python.exe,$(if $(wildcard .venv/bin/python),.venv/bin/python,python3))
+IMAGE ?= art-sim:local
+IMAGE_REF ?= ghcr.io/santidelacarrera/autonomous-red-teaming@sha256:REPLACE_ME
+
+.DEFAULT_GOAL := help
+.PHONY: help setup install test lint typecheck security audit fmt run \
+        frontend-install frontend-test frontend-build frontend-lint \
+        docker-build docker-scan compose-up compose-down seed e2e check clean \
+        migrate migrate-current dr-drill retention-job retention-job-dry-run verify-provenance \
+        demo reproduce verify-audit
+
+help: ## Show this help
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
+
+setup: ## Create venv and install runtime + dev dependencies
+	py -3.12 -m venv .venv
+	$(PY) -m pip install -r requirements.lock
+	$(PY) -m pip install -e ".[dev]" --no-deps
+
+install: ## Install project (editable, no deps)
+	$(PY) -m pip install -e . --no-deps
+
+test: ## Run the backend test suite
+	$(PY) -m pytest -q
+
+lint: ## Ruff lint
+	$(PY) -m ruff check .
+
+typecheck: ## Strict mypy
+	$(PY) -m mypy .
+
+security: ## Bandit SAST + pip-audit dependency scan
+	$(PY) -m bandit -c pyproject.toml -r src
+	$(PY) -m pip_audit -r requirements.lock
+
+mutation: ## On-demand mutation testing of security modules (slow; Linux/WSL + `pip install mutmut`)
+	$(PY) -m mutmut run
+
+fmt: ## Auto-fix lint issues
+	$(PY) -m ruff check --fix .
+
+run: ## Run the dev API on :8080
+	$(PY) -m uvicorn art_sim.api.main:app --reload --port 8080
+
+frontend-install: ## Install frontend deps
+	cd frontend && npm ci
+
+frontend-test: ## Run frontend tests
+	cd frontend && npm test
+
+frontend-lint: ## Lint + typecheck frontend
+	cd frontend && npm run lint && npm run typecheck
+
+frontend-build: ## Build the production frontend (injects CSP)
+	cd frontend && npm run build
+
+docker-build: ## Build the hardened production image
+	docker build -t $(IMAGE) .
+
+docker-scan: ## Build and scan the image (grype, only-fixed high gate)
+	docker build -t $(IMAGE) .
+	grype $(IMAGE) --config .grype.yaml --fail-on high
+
+compose-up: ## Start the local stack (add shadow profile for Neo4j)
+	docker compose up --build
+
+compose-down: ## Stop the local stack
+	docker compose down
+
+seed: ## Seed the Shadow Neo4j topology (requires configured .env)
+	$(PY) scripts/seed_db.py
+
+e2e: ## Run the Shadow end-to-end simulation (requires seeded Neo4j)
+	$(PY) scripts/run_e2e.py
+
+migrate: ## Apply PostgreSQL migrations up to head (requires .[migrations] + a DSN)
+	$(PY) scripts/run_migrations.py upgrade head
+
+migrate-current: ## Show the current applied migration revision
+	$(PY) scripts/run_migrations.py current
+
+dr-drill: ## Run the backup -> failure -> restore -> verify disaster-recovery drill
+	bash scripts/backup_restore_drill.sh
+
+retention-job: ## Execute the automated data-retention purge job for real
+	$(PY) scripts/run_retention_job.py --execute
+
+retention-job-dry-run: ## Report what the retention purge job would delete, without deleting
+	$(PY) scripts/run_retention_job.py --dry-run
+
+verify-provenance: ## Independently verify a container image's build provenance attestation
+	$(PY) scripts/verify_image_provenance.py $(IMAGE_REF)
+
+demo: ## One-command synthetic lab demo -> out/demo/report.html (offline, simulation only)
+	$(PY) -m art_sim.demo --out out/demo
+
+reproduce: ## Reproduce and verify everything from a clean install -> evidence/SUMMARY.md
+	bash scripts/reproduce.sh
+
+verify-audit: ## Verify a durable audit log's hash chain: make verify-audit LOG=path/to/security.jsonl
+	$(PY) scripts/verify_audit_log.py $(LOG)
+
+check: lint typecheck security test ## Run the full backend quality gate
+
+clean: ## Remove caches and build artifacts
+	rm -rf .mypy_cache .pytest_cache .ruff_cache dist frontend/dist

@@ -1,0 +1,14 @@
+apiVersion: v2
+name: art-sim
+description: Autonomous Red Teaming & Attack Graph Simulator — hardened API deployment.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - security
+  - bas
+  - ctem
+  - simulation
+home: https://github.com/Santidelacarrera/autonomous-red-teaming
+sources:
+  - https://github.com/Santidelacarrera/autonomous-red-teaming

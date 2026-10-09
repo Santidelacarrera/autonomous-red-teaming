@@ -38,6 +38,7 @@ class SecurityEventType(StrEnum):
     APPROVAL_REQUESTED = "approval.requested"
     APPROVAL_APPROVED = "approval.approved"
     APPROVAL_REJECTED = "approval.rejected"
+    APPROVAL_EXPIRED = "approval.expired"
     LEASE_ACQUIRED = "worker.lease_acquired"
     LEASE_EXPIRED = "worker.lease_expired"
     FENCING_REJECTED = "worker.fencing_rejected"
@@ -47,6 +48,7 @@ class SecurityEventType(StrEnum):
     RESULT_PUBLISHED = "simulation.result_published"
     SECURITY_CONFIGURATION_FAILURE = "security.configuration_failure"
     ADMIN_READ = "admin.security_read"
+    DATA_RETENTION_PURGED = "compliance.data_retention_purged"
 
 
 class AuditRetentionPolicy(BaseModel):

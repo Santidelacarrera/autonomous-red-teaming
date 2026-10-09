@@ -55,7 +55,9 @@ class PromptInjectionSanitizer:
         """Bound untrusted text and redact common instruction-shaped prompt injections."""
         normalized = self._CONTROL_CHARACTERS.sub(" ", value).strip()
         normalized = self._INSTRUCTION_MARKERS.sub("[redacted]", normalized)
-        return normalized[:max_length]
+        # Strip again after truncation so a cut that lands on whitespace cannot leave a
+        # trailing/leading space; this also makes the transform idempotent.
+        return normalized[:max_length].strip()
 
     def build_topology_context(
         self, path: AttackPath, assets: tuple[Asset, ...]

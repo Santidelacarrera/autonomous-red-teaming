@@ -215,6 +215,7 @@ class _OidcFixture:
             "nbf": now - timedelta(seconds=1),
             "exp": now + timedelta(minutes=5),
             "roles": ["operator"],
+            "org_id": "org-alpha",
             "amr": ["pwd", "mfa"],
             "jti": "token-id",
         }
@@ -280,3 +281,60 @@ async def test_oidc_rejects_invalid_signature_unknown_kid_and_none_algorithm() -
     for token in (forged, unknown, unsecured):
         with pytest.raises(AuthenticationError):
             await provider.validate_token(token)
+
+
+async def test_response_headers_include_full_hardening_set(tmp_path: Path) -> None:
+    """Every response carries the complete defensive header set in development."""
+    client, _ = await _secured_client(tmp_path)
+    response = client.get("/health")
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert response.headers["X-Frame-Options"] == "DENY"
+    assert response.headers["Referrer-Policy"] == "no-referrer"
+    assert response.headers["Cache-Control"] == "no-store"
+    assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
+    assert "geolocation=()" in response.headers["Permissions-Policy"]
+    assert response.headers["X-Request-ID"]
+    # HSTS must NOT be present on local HTTP development.
+    assert "Strict-Transport-Security" not in response.headers
+
+
+async def test_hsts_present_in_production_profile(tmp_path: Path) -> None:
+    """Production-grade settings enable HSTS on every response."""
+    oidc = OidcSettings(
+        issuer="https://idp.example.com",
+        audience="art-sim",
+        jwks_url="https://idp.example.com/.well-known/jwks.json",
+    )
+    settings = SecuritySettings(
+        environment=RuntimeEnvironment.STAGING,
+        authentication_provider=AuthenticationProviderKind.OIDC,
+        oidc=oidc,
+        cors_allowed_origins=("https://command.example.com",),
+        hsts_enabled=True,
+    )
+    store = SqliteOperationalStore(tmp_path / "hsts.sqlite3")
+    await store.initialize()
+    app = create_app(
+        SimulationService(store, ScenarioCatalog(("shadow-demo",))),
+        ApprovalService(store),
+        HealthService({"store": _healthy}),
+        OidcIdentityProvider(oidc),
+        security_settings=settings,
+        rate_limiter=InMemoryRateLimiter(),
+        security_audit=InMemorySecurityAuditSink(),
+    )
+    response = TestClient(app).get("/health")
+    assert response.headers["Strict-Transport-Security"] == "max-age=31536000; includeSubDomains"
+
+
+async def test_oversized_request_body_is_rejected_before_routing(tmp_path: Path) -> None:
+    """A body over the API limit returns 413 without reaching authentication."""
+    client, _ = await _secured_client(tmp_path)
+    oversized = {"scenario_id": "x" * 70_000}
+    response = client.post(
+        "/api/v1/simulations",
+        headers={"Authorization": "Bearer development:operator:operator-user"},
+        json=oversized,
+    )
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "REQUEST_TOO_LARGE"

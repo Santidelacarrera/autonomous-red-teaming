@@ -3,6 +3,27 @@
 RPO and RTO are operator-defined targets, not repository guarantees. Establish them only
 after measuring the selected database, broker, audit and artifact backends.
 
+## Executed drill (not just documented)
+
+`scripts/backup_restore_drill.sh` runs the "Controlled `backup -> failure -> restore ->
+resume`" procedure below against two disposable PostgreSQL containers it creates itself —
+it is not a description, it is the drill: migrate, seed, `pg_dump`, kill the source
+container, `pg_restore` into an isolated recovery container, and verify row counts, a
+seeded run's terminal status, and the recovered `alembic_version` all match. Run it with
+`make dr-drill` (needs Docker + the PostgreSQL client tools on `PATH`). It runs weekly, and
+on demand, in `.github/workflows/dr-drill.yml`, so regression in restore mechanics is
+caught before it is needed in production, not during an actual incident.
+
+The drill **was executed on 2026-10-09 and passed** (`DR_DRILL_RESULT=PASS`: migrations applied
+through the real script, seeded rows and `alembic_version` identical after an isolated restore,
+backup checksum recorded). Its first run failed on a readiness race inside the script itself
+(the official postgres image restarts after a temporary init server); that is fixed. The weekly
+hosted run in `.github/workflows/dr-drill.yml` has not yet been observed.
+
+This covers the database leg of the procedure end-to-end. The broker/DLQ, SIEM/audit
+archive and secret-manager legs below remain an operator procedure against the selected
+vendor service, because this repository does not operate those services.
+
 ## Backup scope
 
 - server operational database: runs, ownership/fencing, decisions, checkpoints, results,

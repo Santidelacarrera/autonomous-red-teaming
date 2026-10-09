@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from typing import ClassVar
 
 from art_sim.domain.exceptions import AuthenticationError, ConfigurationError
 from art_sim.security.identity import (
+    DEFAULT_ORGANIZATION_ID,
+    ORGANIZATION_ID_PATTERN,
     ApiRole,
     AuthenticationContext,
     AuthenticationMethod,
@@ -29,7 +32,7 @@ class DevelopmentHeaderAuthenticator:
             raise ConfigurationError("Development header authentication is disabled")
 
     async def authenticate(self, authorization: str | None) -> Identity:
-        """Authenticate `Bearer development:<role>:<subject>` without persistence."""
+        """Authenticate `Bearer development:<role>:<subject>[#<organization>]` locally."""
         if authorization is None or not authorization.startswith("Bearer "):
             raise AuthenticationError("Authentication is required")
         return await self.validate_token(authorization.removeprefix("Bearer "))
@@ -46,13 +49,16 @@ class DevelopmentHeaderAuthenticator:
             role = ApiRole(fields[0])
         except ValueError as error:
             raise AuthenticationError("Authentication credential is invalid") from error
-        subject = fields[1]
+        subject, _, organization = fields[1].partition("#")
+        if organization and re.fullmatch(ORGANIZATION_ID_PATTERN, organization) is None:
+            raise AuthenticationError("Authentication credential is invalid")
         if not subject or len(subject) > 128 or any(character.isspace() for character in subject):
             raise AuthenticationError("Authentication credential is invalid")
         roles = frozenset({role})
         return Identity(
             subject=subject,
             issuer="art-sim-development",
+            organization_id=organization or DEFAULT_ORGANIZATION_ID,
             roles=roles,
             permissions=permissions_for_roles(roles),
             authentication=AuthenticationContext(

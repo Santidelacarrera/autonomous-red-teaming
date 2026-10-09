@@ -1,0 +1,70 @@
+name: One-off dependency bump (manual)
+
+# Manually-triggered maintenance workflow: bumps a single transitive npm dependency and
+# commits the regenerated lockfile. Exists because no environment used to develop this
+# repository recently had a path to the real npm registry to run `npm update` and get a
+# lockfile with a correct, registry-issued integrity hash -- hand-editing that hash in
+# package-lock.json is exactly the kind of thing that silently breaks `npm ci`. This
+# workflow lets a GitHub-hosted runner (which has real registry access) do it instead.
+#
+# Not meant to stay useful forever: delete it once dependency bumps can be done from a
+# normal workstation again, or replace it with Dependabot/Renovate version-update PRs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: "npm package to bump (must already be in frontend's dependency tree)"
+        required: true
+        default: "source-map-js"
+      version:
+        description: "Target version/range to update to"
+        required: true
+        default: "1.2.2"
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Update the dependency and regenerate the lockfile
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          npm update "${{ inputs.package }}"
+          installed="$(node -p "require('./package-lock.json').packages['node_modules/${{ inputs.package }}'].version")"
+          echo "Resolved ${{ inputs.package }} to ${installed} (target: ${{ inputs.version }})"
+          if [ "${installed}" != "${{ inputs.version }}" ]; then
+            echo "::error::npm update resolved ${{ inputs.package }} to ${installed}, not the requested ${{ inputs.version }} -- check whether a dependent's semver range allows it."
+            exit 1
+          fi
+          # Fail loudly rather than silently committing an unaudited lockfile.
+          npm audit --audit-level=high
+      - name: Commit and push if the lockfile changed
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- frontend/package-lock.json; then
+            echo "No lockfile change produced -- nothing to commit."
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/package-lock.json
+          git commit -F - <<COMMIT_MSG
+          chore(frontend): bump ${{ inputs.package }} to ${{ inputs.version }}
+
+          Resolves the npm audit high-severity finding for ${{ inputs.package }}
+          (GHSA-68fv-2mgg-jv7q for source-map-js@1.2.1) by letting npm itself
+          resolve and hash the fixed version against the real registry, run via
+          this manually-triggered workflow (see fix-npm-audit.yml) rather than
+          by hand-editing package-lock.json's integrity hashes.
+          COMMIT_MSG
+          git push origin HEAD:${{ github.ref_name }}
