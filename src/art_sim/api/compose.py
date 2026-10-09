@@ -86,7 +86,12 @@ async def build_production_app() -> FastAPI:
     )
     dispatcher = BrokerSimulationDispatcher(store, transport)
     rate_limiter = RedisRateLimiter.from_url(_required_env("ART_RATE_LIMIT_ENDPOINT"))
-    telemetry = OtlpTelemetrySink.from_endpoint(_required_env("ART_OTLP_ENDPOINT"))
+    telemetry = OtlpTelemetrySink.from_endpoint(
+        _required_env("ART_OTLP_ENDPOINT"),
+        # Optional: the collector's own health endpoint (e.g. the `health_check` extension,
+        # http://collector:13133). Without it, readiness opens a TCP connection to the endpoint.
+        health_url=os.getenv("ART_OTLP_HEALTH_URL") or None,
+    )
     audit = JsonlDurableSecurityAuditSink(
         Path(os.getenv("ART_AUDIT_PATH", "/app/var/audit/security.jsonl")),
         dependency_settings.audit_retention,

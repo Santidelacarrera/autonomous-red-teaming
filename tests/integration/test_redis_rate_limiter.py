@@ -6,8 +6,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator
 
-import fakeredis.aioredis as fakeredis
 import pytest
+from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from art_sim.adapters.redis_rate_limiter import RedisRateLimiter, RedisRateLimiterSettings
@@ -16,8 +16,8 @@ from art_sim.security.rate_limit import RateLimiterScope, RateLimitPolicy
 
 
 @pytest.fixture
-async def limiter() -> AsyncGenerator[RedisRateLimiter]:
-    client = fakeredis.FakeRedis()
+async def limiter(redis_client: Redis) -> AsyncGenerator[RedisRateLimiter]:
+    client = redis_client
     adapter = RedisRateLimiter(client, RedisRateLimiterSettings(key_prefix="test:rl"))
     yield adapter
     await adapter.close()
