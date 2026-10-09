@@ -16,7 +16,7 @@
   <img alt="FastAPI" src="https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white">
   <img alt="LangGraph" src="https://img.shields.io/badge/workflow-LangGraph-1C3C3C">
   <img alt="React" src="https://img.shields.io/badge/UI-React%20%2B%20Vite-61DAFB?logo=react&logoColor=black">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-587%20backend%20%2F%2020%20frontend-success">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-600%20backend%20%2F%2020%20frontend-success">
   <img alt="Type checked" src="https://img.shields.io/badge/mypy-strict-blue">
   <img alt="Security" src="https://img.shields.io/badge/security-bandit%20%7C%20pip--audit%20%7C%20gitleaks%20%7C%20grype-critical">
   <img alt="Container scan" src="https://img.shields.io/badge/image%20scan-0%20fixable%20high-success">
@@ -400,7 +400,7 @@ accepted work and close injected dependencies.
 
 The local audit executes unit, integration, security, concurrency, recovery,
 frontend and controlled Shadow E2E suites. The current verified count (2026-10-09, from a fresh
-clone, real PostgreSQL 16 and Redis 7) is **587 backend tests passed, 2 skipped** and **20
+clone, real PostgreSQL 16 and Redis 7) is **600 backend tests passed, 2 skipped** and **20
 frontend tests**; Ruff, strict Mypy (162 Python files), `bandit` (0 findings), frontend
 lint/typecheck/build, `pip-audit`, `npm audit` and a full-history Gitleaks scan pass.
 `bash scripts/reproduce.sh` regenerates this evidence and lists every skip with its reason. The pinned Docker image builds,

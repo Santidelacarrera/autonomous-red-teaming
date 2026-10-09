@@ -4,7 +4,7 @@
 
 | Suite | Command | Result |
 | --- | --- | --- |
-| Backend | `python -m pytest -q` (or `bash scripts/reproduce.sh`) | PASS — 587 passed, 2 skipped, with real PostgreSQL 16 and Redis 7 (2026-10-09; the historical 122-test baseline below predates Phases 10-16) |
+| Backend | `python -m pytest -q` (or `bash scripts/reproduce.sh`) | PASS — 600 passed, 2 skipped, with real PostgreSQL 16 and Redis 7 (2026-10-09; the historical 122-test baseline below predates Phases 10-16) |
 | Ruff | `.\.venv\Scripts\python.exe -m ruff check .` | PASS |
 | Mypy strict | `python -m mypy .` | PASS — 162 files |
 | Frontend | `npm test -- --run` | PASS — 20 tests / 8 files |

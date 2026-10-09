@@ -82,7 +82,7 @@ its checks were recorded as *NOT EXECUTED*. They have now been executed, from a 
 |---|---|
 | Ruff, strict mypy (162 files), Bandit | PASS (Bandit was already failing at the Phase 15 baseline: 2 findings, fixed) |
 | `pip-audit -r requirements.lock` | PASS — no known vulnerabilities |
-| Backend pytest | PASS — 587 passed, 2 skipped (the two skips are the `from_region`/`from_url` factories, which only apply when the SDK is absent); PostgreSQL 16 and Redis 7 real |
+| Backend pytest | PASS — 600 passed, 2 skipped (the two skips are the `from_region`/`from_url` factories, which only apply when the SDK is absent); PostgreSQL 16 and Redis 7 real |
 | Same suite in a clean `python:3.12` container, lock only | PASS — 586 passed, 2 skipped (before the Collector/Vault tests were added) |
 | Frontend lint, typecheck, 20 Vitest tests, build | PASS |
 | Gitleaks over the full git history (v8.18.4, built with Go) | PASS — no leaks |
