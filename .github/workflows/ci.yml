@@ -203,7 +203,7 @@ jobs:
         run: docker build --tag art-sim:${{ github.sha }} .
       - name: Scan image vulnerabilities
         id: scan
-        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
           image: art-sim:${{ github.sha }}
           grype-version: v0.119.0
