@@ -98,11 +98,18 @@ jobs:
 
   secret-scan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
+        env:
+          # gitleaks-action requires GITHUB_TOKEN to scan pull_request events (it was
+          # failing with "GITHUB_TOKEN is now required to scan pull requests" on this PR's
+          # own CI run); push events didn't need it, which is why this only showed up here.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   container:
     runs-on: ubuntu-latest
