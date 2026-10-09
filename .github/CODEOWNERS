@@ -1,0 +1,10 @@
+# Default owner for everything in this repository.
+* @Santidelacarrera
+
+# Security-sensitive areas warrant explicit review.
+/src/art_sim/security/        @Santidelacarrera
+/src/art_sim/infrastructure/  @Santidelacarrera
+/.github/                     @Santidelacarrera
+/Dockerfile                   @Santidelacarrera
+/.grype.yaml                  @Santidelacarrera
+/SECURITY.md                  @Santidelacarrera

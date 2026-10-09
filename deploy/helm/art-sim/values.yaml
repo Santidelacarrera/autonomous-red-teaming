@@ -1,0 +1,137 @@
+# Default values for the art-sim hardened API deployment.
+# The application runs in PRODUCTION mode, which fails closed without a complete OIDC,
+# secret-manager, broker, database, rate-limiter, audit and telemetry configuration.
+
+replicaCount: 2
+
+image:
+  repository: ghcr.io/santidelacarrera/art-sim
+  tag: ""  # defaults to .Chart.appVersion
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+
+# Non-secret production configuration (ART_* environment variables).
+config:
+  ART_ENV: production
+  ART_AUTH_MODE: oidc
+  ART_HSTS_ENABLED: "true"
+  ART_RATE_LIMIT_ENABLED: "true"
+  ART_MFA_REQUIRED_FOR_SENSITIVE_ACTIONS: "true"
+  ART_CORS_ALLOWED_ORIGINS: "https://command.example.com"
+  ART_OIDC_ISSUER: "https://identity.example.com"
+  ART_OIDC_AUDIENCE: "art-sim"
+  ART_OIDC_JWKS_URL: "https://identity.example.com/.well-known/jwks.json"
+  ART_OIDC_MFA_CLAIM: "amr"
+  ART_OIDC_MFA_VALUES: "mfa"
+  # Tenant isolation. Every verified token must carry this claim naming the caller's
+  # organization; a token without it is rejected. A single-tenant deployment that does not
+  # issue the claim must opt in explicitly by setting ART_OIDC_DEFAULT_ORGANIZATION below
+  # (never infer it): all callers then belong to that one organization.
+  ART_OIDC_ORGANIZATION_CLAIM: "org_id"
+  # ART_OIDC_DEFAULT_ORGANIZATION: "my-company"
+  # Human review window for a paused simulation, in seconds (60 .. 2592000). A decision
+  # recorded later is refused with HTTP 410 and the run can only be cancelled.
+  ART_APPROVAL_TTL_SECONDS: "86400"
+  # Optional: the collector's own health endpoint (otherwise readiness opens a TCP connection).
+  # ART_OTLP_HEALTH_URL: "http://otel-collector:13133"
+  ART_BROKER_PROVIDER: "redis_streams"
+  ART_DATABASE_PROVIDER: "postgresql"
+  ART_SECRET_PROVIDER: "mounted"
+  ART_AUDIT_PROVIDER: "siem"
+  ART_TELEMETRY_PROVIDER: "otlp"
+  ART_RATE_LIMIT_PROVIDER: "redis"
+  ART_RATE_LIMIT_ENDPOINT: "rediss://redis:6379/0"
+  ART_OTLP_ENDPOINT: "http://otel-collector:4318"
+
+# Secret names resolved from the mounted secret volume (one file per name).
+secrets:
+  # Name of an existing Kubernetes Secret projected at /run/secrets.
+  mountedSecretName: art-sim-secrets
+  mountPath: /run/secrets
+  approvalSecretName: ART_SIM_APPROVAL_SECRET
+  databaseDsnSecretName: ART_DATABASE_DSN
+  brokerCredentialSecretName: ART_BROKER_CREDENTIAL
+
+service:
+  type: ClusterIP
+  port: 8080
+
+# TLS edge termination at the Kubernetes Ingress, matching ART_TLS_TERMINATED_UPSTREAM=true
+# and ART_TRUSTED_PROXY_HOPS. See docs/tls-edge.md. Disabled by default: the chart does not
+# assume cert-manager or a particular ingress controller are installed.
+ingress:
+  enabled: false
+  className: nginx
+  host: art-sim.example.com
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-production
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/backend-protocol: HTTP
+  tls:
+    enabled: true
+    secretName: art-sim-tls
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Restrict egress to DNS, the database, broker, OIDC/JWKS and the telemetry collector.
+networkPolicy:
+  enabled: true
+  ingressNamespace: ingress-nginx
+
+# Fail-closed security defaults; the container already runs as uid 10001.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Runs `python scripts/run_migrations.py upgrade head` as a pre-install/pre-upgrade Helm
+# hook Job, so the versioned schema is migrated before any pod starts against it. See
+# docs/migrations.md. Requires the image to be built with the `migrations` extra installed.
+migrations:
+  enabled: true
+  backoffLimit: 2
+  activeDeadlineSeconds: 300
+
+# Runs `python scripts/run_retention_job.py --execute` on a schedule, enforcing the
+# ART_*_RETENTION_DAYS policy from docs/data-retention.md. Disabled by default: an operator
+# must confirm the configured retention windows match the organization's policy first.
+retention:
+  enabled: false
+  schedule: "17 3 * * *"
+  activeDeadlineSeconds: 1800

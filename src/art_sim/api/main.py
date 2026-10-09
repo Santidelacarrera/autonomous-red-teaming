@@ -22,7 +22,11 @@ from art_sim.api.services import (
 )
 from art_sim.domain.exceptions import ConfigurationError
 from art_sim.platform.checkpoint import sqlite_langgraph_checkpointer
-from art_sim.platform.config import OperationalSettings, RuntimeEnvironment
+from art_sim.platform.config import (
+    OperationalSettings,
+    RuntimeEnvironment,
+    approval_ttl_from_environment,
+)
 from art_sim.platform.health import HealthService
 from art_sim.platform.sqlite import SqliteOperationalStore
 from art_sim.security.audit import InMemorySecurityAuditSink
@@ -50,7 +54,7 @@ def create_local_app() -> FastAPI:
     database_path = Path(
         os.getenv("ART_SIM_OPERATIONAL_DB", str(settings.operational_database))
     )
-    store = SqliteOperationalStore(database_path)
+    store = SqliteOperationalStore(database_path, approval_ttl=approval_ttl_from_environment(None))
     dispatcher = LocalSimulationDispatcher(
         store,
         concurrency=int(os.getenv("ART_LOCAL_WORKER_CONCURRENCY", "10")),

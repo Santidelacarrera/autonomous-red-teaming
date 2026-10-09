@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from art_sim.remediation.models import ApprovalStatus, VerificationStatus
+from art_sim.security.identity import DEFAULT_ORGANIZATION_ID, ORGANIZATION_ID_PATTERN
 
 
 class SimulationRunStatus(StrEnum):
@@ -38,6 +39,7 @@ class SimulationRun(BaseModel):
     graph_version: str = Field(min_length=1, max_length=128)
     workflow_version: str = Field(min_length=1, max_length=64)
     created_by: str = Field(min_length=1, max_length=128)
+    organization_id: str = Field(default=DEFAULT_ORGANIZATION_ID, pattern=ORGANIZATION_ID_PATTERN)
     request_id: str | None = Field(default=None, max_length=64)
     trace_id: UUID | None = None
     risk_before: float | None = Field(default=None, ge=0.0, le=100.0)
@@ -45,6 +47,7 @@ class SimulationRun(BaseModel):
     blast_radius_before: float | None = Field(default=None, ge=0.0, le=100.0)
     blast_radius_after: float | None = Field(default=None, ge=0.0, le=100.0)
     approval_status: ApprovalStatus = ApprovalStatus.PENDING
+    approval_requested_at: datetime | None = None
     approval_timestamp: datetime | None = None
     approval_actor: str | None = Field(default=None, max_length=128)
     approval_reason: str | None = Field(default=None, min_length=10, max_length=512)

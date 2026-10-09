@@ -1,0 +1,21 @@
+art-sim is deployed in PRODUCTION mode. It fails closed and will report NOT READY on
+/readiness until every external dependency is reachable:
+
+  - OIDC issuer/JWKS ({{ .Values.config.ART_OIDC_ISSUER }})
+  - PostgreSQL (secret {{ .Values.secrets.databaseDsnSecretName }})
+  - Redis Streams broker (secret {{ .Values.secrets.brokerCredentialSecretName }})
+  - Rate limiter ({{ .Values.config.ART_RATE_LIMIT_ENDPOINT }})
+  - OTLP collector ({{ .Values.config.ART_OTLP_ENDPOINT }})
+  - Durable audit sink and mounted secrets at {{ .Values.secrets.mountPath }}
+
+Create the mounted secret first, e.g.:
+
+  kubectl create secret generic {{ .Values.secrets.mountedSecretName }} \
+    --from-literal={{ .Values.secrets.approvalSecretName }}="$(openssl rand -hex 32)" \
+    --from-literal={{ .Values.secrets.databaseDsnSecretName }}="postgresql://..." \
+    --from-literal={{ .Values.secrets.brokerCredentialSecretName }}="rediss://..."
+
+Check readiness:
+
+  kubectl port-forward svc/{{ include "art-sim.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+  curl -fsS localhost:{{ .Values.service.port }}/readiness

@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "art-sim.fullname" . }}
+  labels:
+    {{- include "art-sim.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "art-sim.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "art-sim.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "art-sim.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: api
+          image: {{ include "art-sim.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          command: ["python", "-m", "art_sim.api.serve"]
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "art-sim.fullname" . }}-config
+          env:
+            - name: ART_APPROVAL_SECRET_NAME
+              value: {{ .Values.secrets.approvalSecretName | quote }}
+            - name: ART_DATABASE_DSN_SECRET_NAME
+              value: {{ .Values.secrets.databaseDsnSecretName | quote }}
+            - name: ART_BROKER_CREDENTIAL_SECRET_NAME
+              value: {{ .Values.secrets.brokerCredentialSecretName | quote }}
+            - name: ART_SECRETS_DIR
+              value: {{ .Values.secrets.mountPath | quote }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readiness
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: secrets
+              mountPath: {{ .Values.secrets.mountPath }}
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            - name: var
+              mountPath: /app/var
+      volumes:
+        - name: secrets
+          secret:
+            secretName: {{ .Values.secrets.mountedSecretName }}
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+        - name: var
+          emptyDir:
+            sizeLimit: 128Mi

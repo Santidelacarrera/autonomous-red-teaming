@@ -22,5 +22,20 @@ rejects replay, duplicate decisions, invalid lifecycle, and forged state.
 No identity administration CRUD or password/secret endpoint exists. Future administration
 must use an injected external IdP administration adapter and explicit permissions.
 
+## Organization isolation
+
+Roles are enforced *inside* an organization. Every route that names a run first proves the run
+belongs to the caller's organization (`SimulationService.get_scoped`); otherwise the answer is
+**404**, identical to an unknown run, and an `authorization.denied` audit event is written.
+This holds even for an administrator of another organization. Lists are filtered in the
+database, and idempotency keys are namespaced per organization. See
+`docs/security-controls.md` for the tests that prove each of these both ways.
+
+## Review window
+
+A run waiting for approval has a bounded review window (`approval_ttl`). The check runs in the
+same transaction as the decision compare-and-set; an expired decision returns **410** and
+changes nothing. Expiry never approves anything.
+
 Client-provided headers or body fields do not participate in authorization or MFA. A
 viewer remains unable to approve even when its verified identity has MFA assurance.
