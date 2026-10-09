@@ -25,7 +25,11 @@ from uuid import UUID
 
 import asyncpg
 
-from art_sim.domain.exceptions import ApprovalRequiredError, ConfigurationError
+from art_sim.domain.exceptions import (
+    ApprovalExpiredError,
+    ApprovalRequiredError,
+    ConfigurationError,
+)
 from art_sim.platform.lifecycle import SimulationRunStateMachine
 from art_sim.platform.models import (
     AuditEvent,
@@ -83,10 +87,24 @@ class PostgresOperationalStore:
         OperationalStoreCapability.SERVER_GRADE
     )
 
-    def __init__(self, pool: asyncpg.Pool, *, clock: Callable[[], datetime] | None = None) -> None:
-        """Inject a configured asyncpg pool; the deployment owns its lifecycle and DSN."""
+    def __init__(
+        self,
+        pool: asyncpg.Pool,
+        *,
+        clock: Callable[[], datetime] | None = None,
+        approval_ttl: timedelta | None = None,
+    ) -> None:
+        """Inject a configured asyncpg pool; the deployment owns its lifecycle and DSN.
+
+        ``approval_ttl`` closes the human review window: a decision recorded later than
+        this long after the run entered ``WAITING_APPROVAL`` is refused inside the same
+        row-locked transaction as the compare-and-set (``None`` keeps the window open).
+        """
+        if approval_ttl is not None and approval_ttl <= timedelta(0):
+            raise ConfigurationError("Approval TTL must be positive")
         self._pool = pool
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._approval_ttl = approval_ttl
 
     @classmethod
     async def from_dsn(cls, dsn: str, *, min_size: int = 2, max_size: int = 20) -> PostgresOperationalStore:
@@ -190,20 +208,35 @@ class PostgresOperationalStore:
             raise OperationalStoreError("Simulation run does not exist")
         return SimulationRun.model_validate_json(str(payload))
 
-    async def list_runs(self, *, limit: int = 50, offset: int = 0, status: SimulationRunStatus | None = None) -> tuple[SimulationRun, ...]:
+    async def list_runs(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        status: SimulationRunStatus | None = None,
+        organization_id: str | None = None,
+    ) -> tuple[SimulationRun, ...]:
         if not 1 <= limit <= 200 or offset < 0:
             raise ValueError("limit must be 1..200 and offset must not be negative")
+        clauses: list[str] = []
+        parameters: list[object] = []
+        if status is not None:
+            parameters.append(status.value)
+            clauses.append(f"status=${len(parameters)}")
+        if organization_id is not None:
+            # Rows written before tenancy existed carry no key and belong to "default".
+            parameters.append(organization_id)
+            clauses.append(f"COALESCE((payload::jsonb)->>'organization_id','default')=${len(parameters)}")
+        where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
+        parameters.extend((limit, offset))
+        # `where` is assembled only from the constant fragments above plus `$n` placeholders;
+        # every caller-supplied value travels in `parameters`, never in the SQL text.
+        query = (
+            f"SELECT payload FROM simulation_runs {where}"  # nosec B608
+            f"ORDER BY updated_at DESC, run_id DESC LIMIT ${len(parameters) - 1} OFFSET ${len(parameters)}"
+        )
         async with self._pool.acquire() as conn:
-            if status is not None:
-                rows = await conn.fetch(
-                    "SELECT payload FROM simulation_runs WHERE status=$1 ORDER BY updated_at DESC, run_id DESC LIMIT $2 OFFSET $3",
-                    status.value, limit, offset,
-                )
-            else:
-                rows = await conn.fetch(
-                    "SELECT payload FROM simulation_runs ORDER BY updated_at DESC, run_id DESC LIMIT $1 OFFSET $2",
-                    limit, offset,
-                )
+            rows = await conn.fetch(query, *parameters)
         return tuple(SimulationRun.model_validate_json(str(row["payload"])) for row in rows)
 
     async def update_status(self, run_id: UUID, status: SimulationRunStatus) -> SimulationRun:
@@ -249,9 +282,11 @@ class PostgresOperationalStore:
             if row["status"] != SimulationRunStatus.WAITING_APPROVAL.value or row["approval_status"] != ApprovalStatus.PENDING.value:
                 raise ApprovalRequiredError("Only a pending waiting run can receive a decision")
             run = SimulationRun.model_validate_json(str(row["payload"]))
+            now = self._now()
+            if self._approval_ttl is not None and now - (run.approval_requested_at or run.updated_at) > self._approval_ttl:
+                raise ApprovalExpiredError("The review window for this simulation has closed")
             approval_status = ApprovalStatus.APPROVED if decision is ApprovalDecision.APPROVED else ApprovalStatus.REJECTED
             SimulationRunStateMachine.require(run.status, SimulationRunStatus.RESUMING)
-            now = self._now()
             updated = run.model_copy(update={
                 "approval_status": approval_status, "approval_timestamp": now, "approval_actor": actor,
                 "approval_reason": reason, "status": SimulationRunStatus.RESUMING, "updated_at": now,
@@ -356,7 +391,7 @@ class PostgresOperationalStore:
                     run_id, review.workflow_version, review_payload,
                     hashlib.sha256(review_payload.encode("utf-8")).hexdigest(), review.generated_at,
                 )
-            updated = run.model_copy(update={"status": target, "review_ready": review is not None, "updated_at": now})
+            updated = run.model_copy(update={"status": target, "review_ready": review is not None, "approval_requested_at": now, "updated_at": now})
             await self._write_run(conn, updated)
             await conn.execute("UPDATE worker_leases SET lease_expires_at=$1 WHERE run_id=$2", now, run_id)
             await self._append_event(conn, AuditEvent(
@@ -524,7 +559,11 @@ class PostgresOperationalStore:
                 "audit_events",
                 "api_idempotency",
             ):
-                await conn.execute(f"DELETE FROM {table} WHERE run_id = ANY($1::uuid[])", run_ids)
+                # `table` iterates the constant tuple above; run IDs are bound as a parameter.
+                await conn.execute(
+                    f"DELETE FROM {table} WHERE run_id = ANY($1::uuid[])",  # nosec B608
+                    run_ids,
+                )
             await conn.execute("DELETE FROM simulation_runs WHERE run_id = ANY($1::uuid[])", run_ids)
             return len(run_ids)
 

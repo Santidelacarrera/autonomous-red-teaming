@@ -66,7 +66,13 @@ _TABLES_NEWEST_FIRST = (
 
 
 def upgrade() -> None:
-    op.execute(_CREATE)
+    # asyncpg (the driver Alembic runs through here) rejects several commands in a single
+    # prepared statement ("cannot insert multiple commands into a prepared statement"), so
+    # each CREATE TABLE is its own ``op.execute``. Splitting on ";" is safe: the DDL above
+    # contains no string literals or function bodies.
+    for statement in (part.strip() for part in _CREATE.split(";")):
+        if statement:
+            op.execute(statement)
 
 
 def downgrade() -> None:

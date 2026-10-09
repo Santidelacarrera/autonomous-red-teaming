@@ -30,6 +30,17 @@ config:
   ART_OIDC_JWKS_URL: "https://identity.example.com/.well-known/jwks.json"
   ART_OIDC_MFA_CLAIM: "amr"
   ART_OIDC_MFA_VALUES: "mfa"
+  # Tenant isolation. Every verified token must carry this claim naming the caller's
+  # organization; a token without it is rejected. A single-tenant deployment that does not
+  # issue the claim must opt in explicitly by setting ART_OIDC_DEFAULT_ORGANIZATION below
+  # (never infer it): all callers then belong to that one organization.
+  ART_OIDC_ORGANIZATION_CLAIM: "org_id"
+  # ART_OIDC_DEFAULT_ORGANIZATION: "my-company"
+  # Human review window for a paused simulation, in seconds (60 .. 2592000). A decision
+  # recorded later is refused with HTTP 410 and the run can only be cancelled.
+  ART_APPROVAL_TTL_SECONDS: "86400"
+  # Optional: the collector's own health endpoint (otherwise readiness opens a TCP connection).
+  # ART_OTLP_HEALTH_URL: "http://otel-collector:13133"
   ART_BROKER_PROVIDER: "redis_streams"
   ART_DATABASE_PROVIDER: "postgresql"
   ART_SECRET_PROVIDER: "mounted"

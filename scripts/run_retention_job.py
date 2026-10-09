@@ -26,10 +26,12 @@ from pathlib import Path
 
 import asyncpg
 
+from art_sim.adapters.jsonl_audit_sink import JsonlDurableSecurityAuditSink
 from art_sim.adapters.postgres_store import PostgresOperationalStore
 from art_sim.platform.production_config import DataRetentionSettings
 from art_sim.retention.job import RetentionJob
 from art_sim.security.audit import AuditRetentionPolicy
+from art_sim.security.secrets import ExternalSecretProvider
 
 
 async def _resolve_dsn() -> str:
@@ -43,6 +45,7 @@ async def _resolve_dsn() -> str:
             "Set ART_DATABASE_DSN directly, or ART_SECRET_PROVIDER + "
             "ART_DATABASE_DSN_SECRET_NAME so this script can resolve it"
         )
+    provider: ExternalSecretProvider
     if provider_name == "mounted":
         from art_sim.adapters.mounted_secret_provider import MountedSecretsProvider
 
@@ -92,13 +95,11 @@ def _retention_settings_from_environment() -> DataRetentionSettings:
     )
 
 
-async def _build_audit_sink() -> object | None:
+async def _build_audit_sink() -> JsonlDurableSecurityAuditSink | None:
     """Best-effort durable audit sink; a missing/misconfigured one must not block the job."""
     audit_path = os.environ.get("ART_AUDIT_PATH")
     if not audit_path:
         return None
-    from art_sim.adapters.jsonl_audit_sink import JsonlDurableSecurityAuditSink
-
     retention_days = int(os.environ.get("ART_AUDIT_RETENTION_DAYS", "365"))
     return JsonlDurableSecurityAuditSink(
         Path(audit_path), AuditRetentionPolicy(retention_days=retention_days)

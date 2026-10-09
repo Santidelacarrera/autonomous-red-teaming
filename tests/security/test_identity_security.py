@@ -215,6 +215,7 @@ class _OidcFixture:
             "nbf": now - timedelta(seconds=1),
             "exp": now + timedelta(minutes=5),
             "roles": ["operator"],
+            "org_id": "org-alpha",
             "amr": ["pwd", "mfa"],
             "jti": "token-id",
         }

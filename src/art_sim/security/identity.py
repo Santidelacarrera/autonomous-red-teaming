@@ -8,6 +8,11 @@ from typing import ClassVar, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# Single-tenant deployments run entirely inside this organization. Multi-tenant deployments
+# must carry an explicit organization in every verified credential (see OidcSettings).
+DEFAULT_ORGANIZATION_ID = "default"
+ORGANIZATION_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+
 
 class ApiRole(StrEnum):
     """Stable platform roles mapped to permissions by one central policy."""
@@ -56,6 +61,7 @@ class Identity(BaseModel):
 
     subject: str = Field(min_length=1, max_length=128)
     issuer: str = Field(min_length=1, max_length=512)
+    organization_id: str = Field(default=DEFAULT_ORGANIZATION_ID, pattern=ORGANIZATION_ID_PATTERN)
     roles: frozenset[ApiRole] = Field(min_length=1)
     permissions: frozenset[str]
     authentication: AuthenticationContext
