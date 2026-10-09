@@ -225,13 +225,13 @@ elif command -v go >/dev/null 2>&1; then
     > "${EVIDENCE}/gitleaks-build.txt" 2>&1 && GITLEAKS="${PWD}/.repro/bin/gitleaks"
 fi
 if [ -n "${GITLEAKS}" ] && git rev-parse --git-dir >/dev/null 2>&1; then
-  if "${GITLEAKS}" detect --source . --no-banner --redact > "${EVIDENCE}/gitleaks.txt" 2>&1; then
-    record "gitleaks (git history)" PASS "$(grep -E 'commits scanned' "${EVIDENCE}/gitleaks.txt" | sed 's/.*INF//' | xargs)"
+  if "${GITLEAKS}" detect --source . --no-banner --no-color --redact > "${EVIDENCE}/gitleaks.txt" 2>&1; then
+    record "gitleaks (git history)" PASS "$(grep -E 'commits scanned' "${EVIDENCE}/gitleaks.txt" | sed 's/\x1b\[[0-9;]*m//g; s/.*INF//' | xargs)"
   else
     record "gitleaks (git history)" FAIL "findings or error — see ${EVIDENCE}/gitleaks.txt"
   fi
 elif docker_ok && git rev-parse --git-dir >/dev/null 2>&1 \
-     && docker run --rm -v "${PWD}:/repo" "zricethezav/gitleaks:${GITLEAKS_VERSION}" detect --source /repo --no-banner --redact \
+     && docker run --rm -v "${PWD}:/repo" "zricethezav/gitleaks:${GITLEAKS_VERSION}" detect --source /repo --no-banner --no-color --redact \
         > "${EVIDENCE}/gitleaks.txt" 2>&1; then
   record "gitleaks (git history)" PASS "via Docker image"
 else

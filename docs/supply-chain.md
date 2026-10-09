@@ -2,7 +2,11 @@
 
 ## Implemented controls
 
-- `requirements.lock`: exact application + development dependency versions.
+- `requirements.lock`: exact application + development dependency versions, **complete**: it
+  is compiled with `pip-compile --extra=dev` under the Python version CI uses (3.12) and must
+  contain everything the test suite imports. Regenerate it in a `python:3.12` container, not on a
+  developer's OS (a lock compiled on Windows once carried `colorama`). `scripts/reproduce.sh`
+  installs from it alone, so a missing pin fails reproduction instead of hiding in CI.
 - `requirements-runtime.lock`: exact runtime-only dependency versions used by Docker.
 - `frontend/package-lock.json`: exact npm dependency graph installed with `npm ci`.
 - multi-stage Docker build installs the runtime lock and the local wheel with `--no-deps`;
