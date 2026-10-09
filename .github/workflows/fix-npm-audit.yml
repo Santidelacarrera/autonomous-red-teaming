@@ -39,7 +39,13 @@ jobs:
         working-directory: frontend
         run: |
           set -euo pipefail
-          npm update "${{ inputs.package }}@${{ inputs.version }}"
+          npm update "${{ inputs.package }}"
+          installed="$(node -p "require('./package-lock.json').packages['node_modules/${{ inputs.package }}'].version")"
+          echo "Resolved ${{ inputs.package }} to ${installed} (target: ${{ inputs.version }})"
+          if [ "${installed}" != "${{ inputs.version }}" ]; then
+            echo "::error::npm update resolved ${{ inputs.package }} to ${installed}, not the requested ${{ inputs.version }} -- check whether a dependent's semver range allows it."
+            exit 1
+          fi
           # Fail loudly rather than silently committing an unaudited lockfile.
           npm audit --audit-level=high
       - name: Commit and push if the lockfile changed
