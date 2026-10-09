@@ -202,6 +202,7 @@ jobs:
       - name: Build non-root runtime image
         run: docker build --tag art-sim:${{ github.sha }} .
       - name: Scan image vulnerabilities
+        id: scan
         uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
         with:
           image: art-sim:${{ github.sha }}
@@ -210,6 +211,11 @@ jobs:
           severity-cutoff: high
           only-fixed: true
           output-format: sarif
+      - name: Show blocking findings
+        if: failure() && steps.scan.outputs.sarif != ''
+        run: |
+          jq -r '.runs[].results[] | "\(.level)\t\(.ruleId)\t\(.message.text | split("\n")[0])"' \
+            "${{ steps.scan.outputs.sarif }}" | sort -u | head -60
       - name: Generate container SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
