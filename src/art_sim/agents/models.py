@@ -19,6 +19,8 @@ class SimulationAction(StrEnum):
     SIMULATE_ROLE_ASSUMPTION = "simulate_role_assumption"
     SIMULATE_VULNERABILITY = "simulate_vulnerability"
     SIMULATE_LATERAL_MOVEMENT = "simulate_lateral_movement"
+    SIMULATE_CONTAINER_ESCAPE = "simulate_container_escape"
+    SIMULATE_CREDENTIAL_ACCESS = "simulate_credential_access"
 
 
 class PlanStatus(StrEnum):

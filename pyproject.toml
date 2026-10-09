@@ -23,11 +23,44 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Opt-in concrete production adapters (deployment-owned). Not imported by core code.
+redis = [
+    "redis>=5.0,<7.0",
+]
+telemetry = [
+    "opentelemetry-sdk>=1.27,<2.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.27,<2.0",
+]
+postgres = [
+    "asyncpg>=0.29,<1.0",
+]
+aws = [
+    "boto3>=1.34,<2.0",
+]
+vault = [
+    "hvac>=2.1,<3.0",
+]
+migrations = [
+    "alembic>=1.13,<2.0",
+    "asyncpg>=0.29,<1.0",
+    "sqlalchemy[asyncio]>=2.0,<3.0",
+]
 dev = [
+    "alembic>=1.13,<2.0",
+    "asyncpg>=0.29,<1.0",
     "bandit>=1.8",
+    "boto3>=1.34,<2.0",
+    "fakeredis[lua]>=2.26",
+    "hvac>=2.1,<3.0",
+    "moto[secretsmanager]>=5.0,<6.0",
     "mypy>=1.13",
+    "sqlalchemy[asyncio]>=2.0,<3.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.27,<2.0",
+    "opentelemetry-sdk>=1.27,<2.0",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
+    "redis>=5.0,<7.0",
+    "respx>=0.21,<1.0",
     "ruff>=0.7",
 ]
 
@@ -47,6 +80,28 @@ python_version = "3.11"
 strict = true
 warn_unused_ignores = true
 plugins = []
+
+# asyncpg ships no type information; the adapter wraps it behind a typed store.
+[[tool.mypy.overrides]]
+module = ["asyncpg", "asyncpg.*"]
+ignore_missing_imports = true
+
+# boto3/hvac/alembic ship no (or incomplete) type information; adapters wrap them typed.
+[[tool.mypy.overrides]]
+module = ["boto3", "boto3.*", "botocore", "botocore.*", "hvac", "hvac.*", "alembic", "alembic.*"]
+ignore_missing_imports = true
+
+[tool.mutmut]
+# On-demand mutation testing of the security-critical modules. Run with: `make mutation`
+# (slow; not part of the standard CI gate). Each mutant must be killed by the fuzz and
+# adversarial suites — surviving mutants reveal weak assertions.
+paths_to_mutate = [
+    "src/art_sim/infrastructure/cypher_validator.py",
+    "src/art_sim/security/sanitizer.py",
+    "src/art_sim/security/redaction.py",
+    "src/art_sim/security/permissions.py",
+]
+tests_dir = ["tests/security/", "tests/unit/"]
 
 [tool.bandit]
 # Static security analysis of first-party source only; tests exercise failure

@@ -117,6 +117,7 @@ class _Issuer:
             "nbf": now - timedelta(seconds=1),
             "exp": now + timedelta(minutes=5),
             "roles": list(roles),
+            "org_id": "org-alpha",
         }
         if mfa_value is not None:
             claims["amr"] = mfa_value

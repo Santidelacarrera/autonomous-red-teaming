@@ -12,7 +12,12 @@ from pathlib import Path
 from typing import ClassVar
 from uuid import UUID
 
-from art_sim.domain.exceptions import ApprovalRequiredError, ConfigurationError, GraphEngineError
+from art_sim.domain.exceptions import (
+    ApprovalExpiredError,
+    ApprovalRequiredError,
+    ConfigurationError,
+    GraphEngineError,
+)
 from art_sim.platform.lifecycle import SimulationRunStateMachine
 from art_sim.platform.models import (
     AuditEvent,
@@ -34,6 +39,15 @@ class OperationalStoreError(GraphEngineError):
     """Raised when durable operational storage cannot safely complete an operation."""
 
 
+class CrossOrganizationAccessError(OperationalStoreError):
+    """A run exists but belongs to another organization.
+
+    A subclass of ``OperationalStoreError`` with the *same message* as "does not exist", so the
+    HTTP layer answers both identically (404, no existence oracle) while the audit layer can
+    still tell a tenant-boundary probe from a mistyped identifier.
+    """
+
+
 class SqliteOperationalStore:
     """Single-file durable store for checkpoints, runs, audit evidence, and approval CAS.
 
@@ -52,8 +66,17 @@ class SqliteOperationalStore:
         database_path: Path,
         *,
         clock: Callable[[], datetime] | None = None,
+        approval_ttl: timedelta | None = None,
     ) -> None:
-        """Validate the explicit database target; it is never inferred from a secret."""
+        """Validate the explicit database target; it is never inferred from a secret.
+
+        ``approval_ttl`` closes the human review window: a decision recorded later than
+        this long after the run entered ``WAITING_APPROVAL`` is refused inside the same
+        compare-and-set transaction (``None`` keeps the window open, the legacy behavior).
+        """
+        if approval_ttl is not None and approval_ttl <= timedelta(0):
+            raise ConfigurationError("Approval TTL must be positive")
+        self._approval_ttl = approval_ttl
         if database_path.suffix.lower() not in {".db", ".sqlite", ".sqlite3"}:
             raise ConfigurationError("Operational SQLite database must use a database file extension")
         self._path = database_path
@@ -86,12 +109,21 @@ class SqliteOperationalStore:
         return await asyncio.to_thread(self._get_run_sync, run_id)
 
     async def list_runs(
-        self, *, limit: int = 50, offset: int = 0, status: SimulationRunStatus | None = None
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        status: SimulationRunStatus | None = None,
+        organization_id: str | None = None,
     ) -> tuple[SimulationRun, ...]:
-        """List bounded current run records for API pagination without unbounded scans."""
+        """List bounded current run records for API pagination without unbounded scans.
+
+        ``organization_id`` restricts the page to one tenant; ``None`` is the unscoped
+        operator view used by workers and retention, never by the HTTP boundary.
+        """
         if not 1 <= limit <= 200 or offset < 0:
             raise ValueError("limit must be 1..200 and offset must not be negative")
-        return await asyncio.to_thread(self._list_runs_sync, limit, offset, status)
+        return await asyncio.to_thread(self._list_runs_sync, limit, offset, status, organization_id)
 
     async def update_status(self, run_id: UUID, status: SimulationRunStatus) -> SimulationRun:
         """Update non-approval status while preserving the immutable audit trail."""
@@ -422,13 +454,24 @@ class SqliteOperationalStore:
         return SimulationRun.model_validate_json(str(row["payload"]))
 
     def _list_runs_sync(
-        self, limit: int, offset: int, status: SimulationRunStatus | None
+        self,
+        limit: int,
+        offset: int,
+        status: SimulationRunStatus | None,
+        organization_id: str | None,
     ) -> tuple[SimulationRun, ...]:
         query = "SELECT payload FROM simulation_runs"
-        parameters: tuple[object, ...] = ()
+        clauses: list[str] = []
+        parameters: list[object] = []
         if status is not None:
-            query += " WHERE status=?"
-            parameters = (status.value,)
+            clauses.append("status=?")
+            parameters.append(status.value)
+        if organization_id is not None:
+            # Rows written before tenancy existed carry no key and belong to "default".
+            clauses.append("COALESCE(json_extract(payload,'$.organization_id'),'default')=?")
+            parameters.append(organization_id)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY updated_at DESC, run_id DESC LIMIT ? OFFSET ?"
         with self._connection() as connection:
             rows = connection.execute(query, (*parameters, limit, offset)).fetchall()
@@ -482,10 +525,13 @@ class SqliteOperationalStore:
                 connection.rollback()
                 raise ApprovalRequiredError("Only a pending waiting run can receive a decision")
             run = SimulationRun.model_validate_json(str(row["payload"]))
+            now = self._aware_now()
+            if self._approval_expired(run, now):
+                connection.rollback()
+                raise ApprovalExpiredError("The review window for this simulation has closed")
             approval_status = ApprovalStatus.APPROVED if decision is ApprovalDecision.APPROVED else ApprovalStatus.REJECTED
             status = SimulationRunStatus.RESUMING
             SimulationRunStateMachine.require(run.status, status)
-            now = datetime.now(UTC)
             updated = run.model_copy(
                 update={
                     "approval_status": approval_status,
@@ -512,6 +558,13 @@ class SqliteOperationalStore:
             )
             connection.commit()
             return updated
+
+    def _approval_expired(self, run: SimulationRun, now: datetime) -> bool:
+        """Return whether the review window closed before ``now`` (never for a legacy open window)."""
+        if self._approval_ttl is None:
+            return False
+        anchor = run.approval_requested_at or run.updated_at
+        return now - anchor > self._approval_ttl
 
     def _acquire_execution_sync(
         self,
@@ -731,6 +784,7 @@ class SqliteOperationalStore:
                 update={
                     "status": target,
                     "review_ready": review is not None,
+                    "approval_requested_at": now,
                     "updated_at": now,
                 }
             )
