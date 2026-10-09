@@ -26,12 +26,19 @@ from art_sim.adapters.redis_rate_limiter import RedisRateLimiter
 from art_sim.adapters.redis_streams_broker import RedisStreamsBrokerTransport, RedisStreamsSettings
 from art_sim.api.production import create_production_app
 from art_sim.domain.exceptions import ConfigurationError
-from art_sim.platform.config import OperationalSettings, RuntimeEnvironment
+from art_sim.platform.config import (
+    OperationalSettings,
+    RuntimeEnvironment,
+    approval_ttl_from_environment,
+)
 from art_sim.platform.production_config import ProductionDependencySettings
 from art_sim.security.config import SecuritySettings
 from art_sim.security.providers.oidc import OidcIdentityProvider
 from art_sim.worker.dispatcher import BrokerSimulationDispatcher
 from art_sim.worker.fixtures import shadow_scenario_catalog
+
+# A production review window is always bounded; 24 h unless the operator sets another value.
+DEFAULT_PRODUCTION_APPROVAL_TTL_SECONDS = 86_400
 
 
 def _required_env(name: str) -> str:
@@ -67,7 +74,9 @@ async def build_production_app() -> FastAPI:
     )
     if pool is None:  # pragma: no cover - defensive
         raise ConfigurationError("Unable to create a PostgreSQL connection pool")
-    store = PostgresOperationalStore(pool)
+    store = PostgresOperationalStore(
+        pool, approval_ttl=approval_ttl_from_environment(DEFAULT_PRODUCTION_APPROVAL_TTL_SECONDS)
+    )
 
     transport = RedisStreamsBrokerTransport.from_url(
         broker_url,

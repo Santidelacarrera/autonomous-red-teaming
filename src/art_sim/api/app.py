@@ -24,6 +24,7 @@ from art_sim.api.services import (
     SimulationService,
 )
 from art_sim.domain.exceptions import (
+    ApprovalExpiredError,
     ApprovalRequiredError,
     AuthenticationError,
     AuthorizationError,
@@ -236,6 +237,8 @@ def create_app(
             if exc.status_code == 401
             else "FORBIDDEN"
             if exc.status_code == 403
+            else "APPROVAL_EXPIRED"
+            if exc.status_code == 410
             else "RATE_LIMIT_EXCEEDED"
             if exc.status_code == 429
             else "API_REQUEST_REJECTED"
@@ -245,6 +248,8 @@ def create_app(
             if exc.status_code == 401
             else "You do not have permission to perform this action."
             if exc.status_code == 403
+            else "The review window for this simulation has closed."
+            if exc.status_code == 410
             else "Request rate limit exceeded."
             if exc.status_code == 429
             else "Request cannot be completed"
@@ -279,6 +284,19 @@ def create_app(
             metrics.increment("rate_limit_exceeded_total")
             await emit(request, SecurityEventType.RATE_LIMIT_EXCEEDED, "limited")
             raise HTTPException(status_code=429, headers={"Retry-After": str(decision.retry_after_seconds)})
+
+    async def own_run(request: Request, identity: Principal, run_id: UUID) -> SimulationRun:
+        """Load a run only inside the caller's organization (complete tenant mediation).
+
+        Cross-organization access is audited as a denial but answered as 404, identical to
+        an unknown identifier, so run IDs cannot be enumerated across tenants.
+        """
+        try:
+            return await simulation_service.get_scoped(run_id, identity.organization_id)
+        except OperationalStoreError:
+            metrics.increment("cross_organization_denied_total")
+            await emit(request, SecurityEventType.AUTHORIZATION_DENIED, "denied", identity, run_id)
+            raise
 
     async def principal(request: Request, authorization: str | None = Header(default=None)) -> Principal:
         host = request.client.host if request.client else "unknown"
@@ -349,6 +367,7 @@ def create_app(
                 identity.subject,
                 idempotency_key,
                 request.state.request_id,
+                identity.organization_id,
             )
             if created:
                 metrics.increment("simulation_created_total")
@@ -377,6 +396,7 @@ def create_app(
                 identity.subject,
                 idempotency_key,
                 request.state.request_id,
+                identity.organization_id,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail="Batch request is invalid") from exc
@@ -400,19 +420,20 @@ def create_app(
         limit: int = 50,
         offset: int = 0,
         status: SimulationRunStatus | None = None,
-        _: Principal = Depends(require(Permission.SIMULATION_READ)),  # noqa: B008
+        identity: Principal = Depends(require(Permission.SIMULATION_READ)),  # noqa: B008
     ) -> dict[str, object]:
         if not 1 <= limit <= 200 or offset < 0:
             raise HTTPException(status_code=422, detail="Pagination is invalid")
-        runs = await simulation_service.list(limit, offset, status)
+        runs = await simulation_service.list(limit, offset, status, identity.organization_id)
         return {"items": [_run_response(run) for run in runs], "limit": limit, "offset": offset}
 
     @app.get("/api/v1/simulations/{run_id}", tags=["simulations"])
     async def get_simulation(
+        request: Request,
         run_id: UUID,
-        _: Principal = Depends(require(Permission.SIMULATION_READ)),  # noqa: B008
+        identity: Principal = Depends(require(Permission.SIMULATION_READ)),  # noqa: B008
     ) -> dict[str, object]:
-        return _run_response(await simulation_service.get(str(run_id)))
+        return _run_response(await own_run(request, identity, run_id))
 
     @app.post("/api/v1/simulations/{run_id}/cancel", tags=["simulations"])
     async def cancel_simulation(
@@ -422,6 +443,7 @@ def create_app(
     ) -> dict[str, object]:
         if cancellation_service is None:
             raise HTTPException(status_code=409, detail="Cancellation is not configured")
+        await own_run(request, identity, run_id)
         await limit(
             request,
             identity.subject,
@@ -440,9 +462,11 @@ def create_app(
 
     @app.get("/api/v1/simulations/{run_id}/events", tags=["audit"])
     async def simulation_events(
+        request: Request,
         run_id: UUID,
-        _: Principal = Depends(require(Permission.AUDIT_READ)),  # noqa: B008
+        identity: Principal = Depends(require(Permission.AUDIT_READ)),  # noqa: B008
     ) -> dict[str, object]:
+        await own_run(request, identity, run_id)
         events = await simulation_service.events(run_id)
         return {
             "items": [
@@ -476,6 +500,7 @@ def create_app(
             metrics.increment("mfa_failure_total")
             await emit(request, SecurityEventType.MFA_FAILURE, "denied", identity, run_id)
             raise HTTPException(status_code=403, detail="Step-up authentication is required")
+        await own_run(request, identity, run_id)
         await limit(request, identity.subject, RateLimitPolicy("approval", security.approval_requests_per_minute))
         try:
             if review_service is not None:
@@ -496,14 +521,20 @@ def create_app(
             event_type = SecurityEventType.APPROVAL_APPROVED if body.decision is ApprovalDecision.APPROVED else SecurityEventType.APPROVAL_REJECTED
             await emit(request, event_type, "succeeded", identity, run_id)
             return _run_response(approved_run)
+        except ApprovalExpiredError as exc:
+            metrics.increment("approval_expired_total")
+            await emit(request, SecurityEventType.APPROVAL_EXPIRED, "denied", identity, run_id)
+            raise HTTPException(status_code=410, detail="Approval window has closed") from exc
         except ApprovalRequiredError as exc:
             raise HTTPException(status_code=409, detail="Approval state conflicts with this request") from exc
 
     @app.get("/api/v1/simulations/{run_id}/risk", tags=["analysis"])
     async def risk(
+        request: Request,
         run_id: UUID,
-        _: Principal = Depends(require(Permission.RISK_READ)),  # noqa: B008
+        identity: Principal = Depends(require(Permission.RISK_READ)),  # noqa: B008
     ) -> dict[str, object]:
+        await own_run(request, identity, run_id)
         result = await load_result(run_id)
         return {
             "risk_before": result.risk.score,
@@ -520,17 +551,20 @@ def create_app(
         return await result_service.get(run_id)
 
     @app.get("/api/v1/simulations/{run_id}/attack-paths", tags=["analysis"])
-    async def attack_paths(run_id: UUID, _: Principal = Depends(require(Permission.ATTACK_PATH_READ))) -> dict[str, object]:  # noqa: B008
+    async def attack_paths(request: Request, run_id: UUID, identity: Principal = Depends(require(Permission.ATTACK_PATH_READ))) -> dict[str, object]:  # noqa: B008
+        await own_run(request, identity, run_id)
         result = await load_result(run_id)
         return {"items": [path.model_dump(mode="json") for path in result.attack_paths]}
 
     @app.get("/api/v1/simulations/{run_id}/blast-radius", tags=["analysis"])
-    async def blast_radius(run_id: UUID, _: Principal = Depends(require(Permission.BLAST_RADIUS_READ))) -> dict[str, object]:  # noqa: B008
+    async def blast_radius(request: Request, run_id: UUID, identity: Principal = Depends(require(Permission.BLAST_RADIUS_READ))) -> dict[str, object]:  # noqa: B008
+        await own_run(request, identity, run_id)
         result = await load_result(run_id)
         return result.blast_radius.model_dump(mode="json")
 
     @app.get("/api/v1/simulations/{run_id}/remediations", tags=["remediation"])
-    async def remediations(run_id: UUID, _: Principal = Depends(require(Permission.REMEDIATION_READ))) -> dict[str, object]:  # noqa: B008
+    async def remediations(request: Request, run_id: UUID, identity: Principal = Depends(require(Permission.REMEDIATION_READ))) -> dict[str, object]:  # noqa: B008
+        await own_run(request, identity, run_id)
         result = await load_result(run_id)
         return {
             "items": [item.model_dump(mode="json") for item in result.remediations],
@@ -541,10 +575,12 @@ def create_app(
 
     @app.get("/api/v1/simulations/{run_id}/review", tags=["remediation"])
     async def review(
+        request: Request,
         run_id: UUID,
-        _: Principal = Depends(require(Permission.REMEDIATION_READ)),  # noqa: B008
+        identity: Principal = Depends(require(Permission.REMEDIATION_READ)),  # noqa: B008
     ) -> dict[str, object]:
         """Return the exact countermeasure evidence available to the human reviewer."""
+        await own_run(request, identity, run_id)
         if review_service is None:
             await simulation_service.get(str(run_id))
             raise ResultNotAvailableError("Simulation review persistence is not configured")
@@ -552,14 +588,16 @@ def create_app(
         return package.model_dump(mode="json")
 
     @app.get("/api/v1/simulations/{run_id}/verification", tags=["verification"])
-    async def verification(run_id: UUID, _: Principal = Depends(require(Permission.VERIFICATION_READ))) -> dict[str, object]:  # noqa: B008
+    async def verification(request: Request, run_id: UUID, identity: Principal = Depends(require(Permission.VERIFICATION_READ))) -> dict[str, object]:  # noqa: B008
+        await own_run(request, identity, run_id)
         result = await load_result(run_id)
         return result.verification.model_dump(mode="json")
 
     @app.get("/api/v1/simulations/{run_id}/report", tags=["reports"])
-    async def report(run_id: UUID, format: str = "markdown", _: Principal = Depends(require(Permission.REPORT_READ))) -> dict[str, str]:  # noqa: B008
+    async def report(request: Request, run_id: UUID, format: str = "markdown", identity: Principal = Depends(require(Permission.REPORT_READ))) -> dict[str, str]:  # noqa: B008
         if format != "markdown":
             raise HTTPException(status_code=422, detail="Only markdown reports are supported")
+        await own_run(request, identity, run_id)
         result = await load_result(run_id)
         return {"format": "markdown", "content": result.report_markdown}
 

@@ -8,7 +8,9 @@ from uuid import UUID
 from art_sim.domain.exceptions import ResultNotAvailableError
 from art_sim.platform.models import AuditEvent, SimulationRun, SimulationRunStatus
 from art_sim.platform.ports import OperationalStore
+from art_sim.platform.sqlite import OperationalStoreError
 from art_sim.remediation.models import ApprovalDecision
+from art_sim.security.identity import DEFAULT_ORGANIZATION_ID
 from art_sim.worker.models import SimulationArtifacts, SimulationReview
 from art_sim.worker.ports import SimulationDispatcher
 
@@ -52,6 +54,7 @@ class SimulationService:
         actor: str,
         idempotency_key: str | None = None,
         request_id: str | None = None,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
     ) -> tuple[SimulationRun, bool]:
         """Persist an accepted Shadow scenario; a worker is responsible for actual analysis."""
         if not self._scenarios.contains(scenario_id):
@@ -61,8 +64,16 @@ class SimulationService:
             graph_version="unresolved",
             workflow_version=self._workflow_version,
             created_by=actor,
+            organization_id=organization_id,
             request_id=request_id,
         )
+        if idempotency_key is not None:
+            # Idempotency keys are chosen by callers, so they must never be a shared namespace:
+            # without the organization in the digest, tenant B reusing tenant A's key would be
+            # handed tenant A's run.
+            idempotency_key = sha256(
+                f"{organization_id}\x00{idempotency_key}".encode()
+            ).hexdigest()
         if idempotency_key is None:
             await self._store.create_run(run)
             if self._dispatcher is not None:
@@ -80,6 +91,7 @@ class SimulationService:
         actor: str,
         idempotency_key: str,
         request_id: str | None = None,
+        organization_id: str = DEFAULT_ORGANIZATION_ID,
     ) -> tuple[SimulationRun, ...]:
         """Create a bounded set of independently durable, idempotent simulations."""
         if not 1 <= count <= 10:
@@ -101,6 +113,7 @@ class SimulationService:
                 actor,
                 item_key,
                 request_id,
+                organization_id,
             )
             runs.append(run)
         return tuple(runs)
@@ -113,9 +126,28 @@ class SimulationService:
         """Retrieve a run through the repository boundary."""
         return await self._store.get_run(UUID(run_id))
 
-    async def list(self, limit: int, offset: int, status: SimulationRunStatus | None) -> tuple[SimulationRun, ...]:
-        """Return a bounded list through the durable repository."""
-        return await self._store.list_runs(limit=limit, offset=offset, status=status)
+    async def get_scoped(self, run_id: str | UUID, organization_id: str) -> SimulationRun:
+        """Retrieve a run only when it belongs to ``organization_id``.
+
+        A run owned by another organization is reported exactly like a missing one, so a
+        caller cannot use the response to learn which run identifiers exist elsewhere.
+        """
+        run = await self._store.get_run(UUID(str(run_id)))
+        if run.organization_id != organization_id:
+            raise OperationalStoreError("Simulation run does not exist")
+        return run
+
+    async def list(
+        self,
+        limit: int,
+        offset: int,
+        status: SimulationRunStatus | None,
+        organization_id: str | None = None,
+    ) -> tuple[SimulationRun, ...]:
+        """Return a bounded list through the durable repository, optionally tenant-scoped."""
+        return await self._store.list_runs(
+            limit=limit, offset=offset, status=status, organization_id=organization_id
+        )
 
     async def events(self, run_id: UUID) -> tuple[AuditEvent, ...]:
         """Return typed, append-only operational events for an authorized audit read."""

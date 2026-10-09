@@ -87,6 +87,7 @@ class OperationalStore(Protocol):
         limit: int = 50,
         offset: int = 0,
         status: SimulationRunStatus | None = None,
+        organization_id: str | None = None,
     ) -> tuple[SimulationRun, ...]: ...
 
     async def decide(
