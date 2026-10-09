@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import ClassVar
 
 import pytest
 from pydantic import ValidationError
@@ -43,7 +44,7 @@ class FakeRetentionBroker:
 
 
 class FakeAuditSink:
-    durability = AuditDurability.VOLATILE
+    durability: ClassVar[AuditDurability] = AuditDurability.VOLATILE
 
     def __init__(self) -> None:
         self.events: list[SecurityAuditEvent] = []

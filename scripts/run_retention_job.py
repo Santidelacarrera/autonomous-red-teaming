@@ -26,6 +26,7 @@ from pathlib import Path
 
 import asyncpg
 
+from art_sim.adapters.jsonl_audit_sink import JsonlDurableSecurityAuditSink
 from art_sim.adapters.postgres_store import PostgresOperationalStore
 from art_sim.platform.production_config import DataRetentionSettings
 from art_sim.retention.job import RetentionJob
@@ -94,13 +95,11 @@ def _retention_settings_from_environment() -> DataRetentionSettings:
     )
 
 
-async def _build_audit_sink() -> object | None:
+async def _build_audit_sink() -> JsonlDurableSecurityAuditSink | None:
     """Best-effort durable audit sink; a missing/misconfigured one must not block the job."""
     audit_path = os.environ.get("ART_AUDIT_PATH")
     if not audit_path:
         return None
-    from art_sim.adapters.jsonl_audit_sink import JsonlDurableSecurityAuditSink
-
     retention_days = int(os.environ.get("ART_AUDIT_RETENTION_DAYS", "365"))
     return JsonlDurableSecurityAuditSink(
         Path(audit_path), AuditRetentionPolicy(retention_days=retention_days)

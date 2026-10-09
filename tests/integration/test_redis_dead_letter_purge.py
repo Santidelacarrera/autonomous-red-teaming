@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-import fakeredis.aioredis as fakeredis
 import pytest
+from redis.asyncio import Redis
 
 from art_sim.adapters.redis_streams_broker import RedisStreamsBrokerTransport, RedisStreamsSettings
 
@@ -21,9 +21,8 @@ def _ms(dt: datetime) -> int:
 
 
 @pytest.fixture
-async def transport() -> RedisStreamsBrokerTransport:
-    client = fakeredis.FakeRedis()
-    return RedisStreamsBrokerTransport(client, SETTINGS)
+async def transport(redis_client: Redis) -> RedisStreamsBrokerTransport:
+    return RedisStreamsBrokerTransport(redis_client, SETTINGS)
 
 
 async def _add_dlq_entry(transport: RedisStreamsBrokerTransport, when: datetime, reason: str) -> None:
