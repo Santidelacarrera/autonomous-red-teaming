@@ -52,6 +52,19 @@ jobs:
         working-directory: frontend
       - run: npm run build
         working-directory: frontend
+      - name: Dump npm audit report for diagnostics
+        # Always capture the full report (not just the high/critical gate below) so a
+        # failure is actionable from the uploaded artifact even when a contributor's
+        # environment has no path to the npm registry to reproduce it locally.
+        if: always()
+        run: npm audit --json > npm-audit-report.json || true
+        working-directory: frontend
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: npm-audit-report
+          path: frontend/npm-audit-report.json
+          retention-days: 14
       - run: npm audit --audit-level=high
         working-directory: frontend
       - run: python -m ruff check .
