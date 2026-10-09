@@ -28,7 +28,7 @@
 | Suite | Tests | What it proves |
 |---|---:|---|
 | `tests/security/test_approval_controls.py` | 30 | review window (incl. boundary), permissions, replay, HMAC signature tampering |
-| `tests/security/test_org_isolation.py` | 47 | tenant mediation on all 11 run routes, role matrix, OIDC organization claim |
+| `tests/security/test_org_isolation.py` | 51 | tenant mediation on all 11 run routes, role matrix, OIDC organization claim |
 | `tests/security/test_audit_integrity.py` | 21 | gaps, duplicates, edits, reordering, torn writes, truncation, SIEM loss/duplication |
 | `tests/integration/test_state_integrity.py` | 95 | invalid transitions leave all tables unchanged (SQLite + PostgreSQL) |
 | `tests/integration/test_checkpoint_recovery.py` | 6 | mid-graph crash recovery equals an uninterrupted run |

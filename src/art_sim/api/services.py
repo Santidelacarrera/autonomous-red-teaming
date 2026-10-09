@@ -8,7 +8,7 @@ from uuid import UUID
 from art_sim.domain.exceptions import ResultNotAvailableError
 from art_sim.platform.models import AuditEvent, SimulationRun, SimulationRunStatus
 from art_sim.platform.ports import OperationalStore
-from art_sim.platform.sqlite import OperationalStoreError
+from art_sim.platform.sqlite import CrossOrganizationAccessError
 from art_sim.remediation.models import ApprovalDecision
 from art_sim.security.identity import DEFAULT_ORGANIZATION_ID
 from art_sim.worker.models import SimulationArtifacts, SimulationReview
@@ -68,6 +68,8 @@ class SimulationService:
             request_id=request_id,
         )
         if idempotency_key is not None:
+            if not 8 <= len(idempotency_key) <= 128:
+                raise ValueError("Idempotency key is invalid")
             # Idempotency keys are chosen by callers, so they must never be a shared namespace:
             # without the organization in the digest, tenant B reusing tenant A's key would be
             # handed tenant A's run.
@@ -134,7 +136,7 @@ class SimulationService:
         """
         run = await self._store.get_run(UUID(str(run_id)))
         if run.organization_id != organization_id:
-            raise OperationalStoreError("Simulation run does not exist")
+            raise CrossOrganizationAccessError("Simulation run does not exist")
         return run
 
     async def list(

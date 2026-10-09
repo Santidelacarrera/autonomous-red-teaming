@@ -220,6 +220,36 @@ async def test_cross_organization_probe_is_audited_as_a_denial(tmp_path: Path) -
     assert denied[0].result == "denied"
 
 
+async def test_unknown_run_ids_are_not_recorded_as_cross_organization_denials(
+    tmp_path: Path,
+) -> None:
+    """A mistyped identifier is an ordinary 404; only a real tenant-boundary probe is a denial."""
+    env = await _env(tmp_path)
+    for _ in range(3):
+        assert env.client.get(f"/api/v1/simulations/{uuid4()}", headers=GLOBEX_OP).status_code == 404
+    denied = [
+        event
+        for event in await env.audit.recent(limit=200)
+        if event.event_type is SecurityEventType.AUTHORIZATION_DENIED
+    ]
+    assert denied == []
+
+
+@pytest.mark.parametrize("key", ["short", "x" * 129, ""])
+async def test_idempotency_keys_keep_their_length_bounds_under_namespacing(
+    tmp_path: Path, key: str
+) -> None:
+    """Hashing the key per organization must not let malformed client keys through."""
+    env = await _env(tmp_path)
+    response = env.client.post(
+        "/api/v1/simulations",
+        headers={**ACME_OP, "Idempotency-Key": key},
+        json={"scenario_id": "shadow-demo"},
+    )
+    assert response.status_code == 422
+    assert await env.store.list_runs(organization_id="acme") == ()
+
+
 async def test_foreign_organization_cannot_decide_and_owner_still_can(tmp_path: Path) -> None:
     env = await _env(tmp_path)
     run_id = env.create(ACME_OP)

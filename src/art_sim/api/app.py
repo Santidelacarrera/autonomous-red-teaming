@@ -36,7 +36,7 @@ from art_sim.observability.telemetry import MetricsRegistry
 from art_sim.platform.config import RuntimeEnvironment
 from art_sim.platform.health import HealthService
 from art_sim.platform.models import SimulationRun, SimulationRunStatus
-from art_sim.platform.sqlite import OperationalStoreError
+from art_sim.platform.sqlite import CrossOrganizationAccessError, OperationalStoreError
 from art_sim.remediation.models import ApprovalDecision, PreApprovalStatus
 from art_sim.security.audit import (
     AuditDurability,
@@ -293,7 +293,9 @@ def create_app(
         """
         try:
             return await simulation_service.get_scoped(run_id, identity.organization_id)
-        except OperationalStoreError:
+        except CrossOrganizationAccessError:
+            # Only a real tenant-boundary probe is recorded as a denial; a mistyped or unknown
+            # identifier (a plain OperationalStoreError) is an ordinary 404 and is not.
             metrics.increment("cross_organization_denied_total")
             await emit(request, SecurityEventType.AUTHORIZATION_DENIED, "denied", identity, run_id)
             raise

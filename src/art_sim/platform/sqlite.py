@@ -39,6 +39,15 @@ class OperationalStoreError(GraphEngineError):
     """Raised when durable operational storage cannot safely complete an operation."""
 
 
+class CrossOrganizationAccessError(OperationalStoreError):
+    """A run exists but belongs to another organization.
+
+    A subclass of ``OperationalStoreError`` with the *same message* as "does not exist", so the
+    HTTP layer answers both identically (404, no existence oracle) while the audit layer can
+    still tell a tenant-boundary probe from a mistyped identifier.
+    """
+
+
 class SqliteOperationalStore:
     """Single-file durable store for checkpoints, runs, audit evidence, and approval CAS.
 
