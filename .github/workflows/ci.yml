@@ -54,10 +54,25 @@ jobs:
         working-directory: frontend
       - name: Dump npm audit report for diagnostics
         # Always capture the full report (not just the high/critical gate below) so a
-        # failure is actionable from the uploaded artifact even when a contributor's
-        # environment has no path to the npm registry to reproduce it locally.
+        # failure is actionable even when a contributor's environment has no path to the
+        # npm registry to reproduce it locally. Emits each high/critical finding as a
+        # workflow annotation (visible via the Checks API/UI, unlike the raw log or the
+        # artifact zip, both served from a host some environments can't reach) in
+        # addition to the full JSON artifact.
         if: always()
-        run: npm audit --json > npm-audit-report.json || true
+        run: |
+          npm audit --json > npm-audit-report.json || true
+          node -e "
+            const r = JSON.parse(require('fs').readFileSync('npm-audit-report.json', 'utf8'));
+            const vulns = r.vulnerabilities || {};
+            for (const [name, v] of Object.entries(vulns)) {
+              if (v.severity !== 'high' && v.severity !== 'critical') continue;
+              const via = (v.via || [])
+                .map((x) => (typeof x === 'string' ? x : \`\${x.name}: \${x.title} (\${x.url})\`))
+                .join(' | ');
+              console.log(\`::warning title=npm audit\\: \${name} (\${v.severity})::range=\${v.range} fixAvailable=\${JSON.stringify(v.fixAvailable)} via=\${via}\`);
+            }
+          "
         working-directory: frontend
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
