@@ -75,7 +75,7 @@ jobs:
             }
           "
         working-directory: frontend
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: npm-audit-report
@@ -110,7 +110,7 @@ jobs:
             python scripts/evidence_summary.py junit test-results/junit.xml \
               --fail-on-skip 'No PostgreSQL|ART_REDIS_TEST_URL|unreachable|Docker daemon|cannot pull|could not start|did not (become|open)'
           } | tee -a "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: test-results
@@ -120,7 +120,7 @@ jobs:
         run: python -m art_sim.demo --out evidence/demo --quiet
       - name: Verify the demo's audit hash chain
         run: python scripts/verify_audit_log.py evidence/demo/audit/security.jsonl
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: lab-demo
@@ -144,7 +144,7 @@ jobs:
       - name: Hash release evidence
         shell: bash
         run: python scripts/generate_artifact_manifest.py --output dist/SHA256SUMS dist/*.whl dist/*.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: supply-chain-evidence
           path: |
