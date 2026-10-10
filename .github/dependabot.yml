@@ -21,6 +21,11 @@ updates:
       npm-minor-patch:
         update-types: ["minor", "patch"]
     labels: ["dependencies", "frontend", "security"]
+    ignore:
+      # typescript-eslint (latest 8.71.1) declares `typescript <6.1.0`, so `npm ci` fails on
+      # TypeScript 7. Remove this once typescript-eslint supports it.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   # GitHub Actions (keeps the commit-pinned actions patched)
   - package-ecosystem: github-actions
@@ -35,3 +40,8 @@ updates:
     schedule:
       interval: weekly
     labels: ["dependencies", "container", "security"]
+    ignore:
+      # The runtime is validated on the 3.13 line (lock, Grype policy). Move to 3.14 as a
+      # deliberate change, not through an automated bump.
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
