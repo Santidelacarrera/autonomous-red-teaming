@@ -44,7 +44,7 @@ The demo runs the real stack against a **fictional** 11-asset estate, shows the 
 **before and after** an approved control, explains the risk score factor by factor, tries to
 bypass the human gate in six ways (all must fail), records the approval and a hash-chained
 audit trail, and ends with a digest an outside reviewer can compare to the one committed here.
-See [docs/demo.md](docs/demo.md), [docs/reproducibility.md](docs/reproducibility.md),
+See [docs/bas.md](docs/bas.md) for the breach-and-attack simulation (`make bas`), [docs/demo.md](docs/demo.md), [docs/reproducibility.md](docs/reproducibility.md),
 [docs/security-controls.md](docs/security-controls.md) and
 [docs/integrations.md](docs/integrations.md) (what is verified against real services, and what is
 explicitly still pending).

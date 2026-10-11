@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -42,6 +43,28 @@ class SanitizedTopologyContext(BaseModel):
     hops: tuple[SafeTopologyHop, ...] = Field(min_length=1, max_length=8)
 
 
+# Look-alike letters NFKC leaves alone. One-to-one, so spans found in the folded text map
+# straight back onto the original; only letters that appear in the instruction markers.
+_CONFUSABLES = str.maketrans(
+    {
+        "\u0131": "i",  # dotless i
+        "\u0456": "i",  # Ukrainian i
+        "\u0430": "a",  # Cyrillic a
+        "\u0435": "e",  # Cyrillic ie
+        "\u043e": "o",  # Cyrillic o
+        "\u0441": "c",  # Cyrillic es
+        "\u0440": "p",  # Cyrillic er
+        "\u0445": "x",  # Cyrillic ha
+    }
+)
+
+
+def _normalize(value: str) -> str:
+    """NFKC, minus invisible format characters (zero-width joiners, bidi marks, soft hyphen)."""
+    folded = unicodedata.normalize("NFKC", value)
+    return "".join(ch for ch in folded if unicodedata.category(ch) != "Cf")
+
+
 class PromptInjectionSanitizer:
     """Remove control text and never expose raw scanner/Kubernetes fields to planners."""
 
@@ -53,8 +76,12 @@ class PromptInjectionSanitizer:
 
     def sanitize_text(self, value: str, *, max_length: int = 512) -> str:
         """Bound untrusted text and redact common instruction-shaped prompt injections."""
-        normalized = self._CONTROL_CHARACTERS.sub(" ", value).strip()
-        normalized = self._INSTRUCTION_MARKERS.sub("[redacted]", normalized)
+        normalized = self._CONTROL_CHARACTERS.sub(" ", _normalize(value)).strip()
+        # Match on a look-alike-folded copy, redact the same spans in the visible text.
+        skeleton = normalized.translate(_CONFUSABLES)
+        spans = [m.span() for m in self._INSTRUCTION_MARKERS.finditer(skeleton)]
+        for start, end in reversed(spans):
+            normalized = f"{normalized[:start]}[redacted]{normalized[end:]}"
         # Strip again after truncation so a cut that lands on whitespace cannot leave a
         # trailing/leading space; this also makes the transform idempotent.
         return normalized[:max_length].strip()

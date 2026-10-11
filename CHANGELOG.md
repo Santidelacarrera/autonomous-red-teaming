@@ -6,6 +6,22 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **Breach-and-attack simulation** (`python -m art_sim.bas`, `make bas`): 34 reproducible attacks
+  against a synthetic two-tenant lab (cross-tenant access on every run route, identifier
+  enumeration, organization spoofing, idempotency-key collision, role escalation, SQL / header /
+  type-confusion injection, prompt injection against the planner context). Every attempt is
+  recorded by **AegisTrace**, a hash-chained forensic log verifiable with
+  `scripts/verify_audit_log.py`. Runs in CI against SQLite and a real PostgreSQL. See
+  [docs/bas.md](docs/bas.md).
+
+### Security
+- `PromptInjectionSanitizer.sanitize_text` was bypassed by zero-width characters, soft hyphens and
+  look-alike letters (e.g. `ig<ZWSP>nore all previous instructions`). Text is now NFKC-normalised,
+  invisible format characters are removed, and look-alikes are folded before matching. The
+  function is not on a production path today (the planner context is an allow-list), so this is
+  defence in depth.
+
 ### Breaking
 - **Organization (tenant) isolation.** OIDC tokens must now carry a verified organization claim
   (`org_id`, or `ART_OIDC_ORGANIZATION_CLAIM`); a token without it is rejected. Deployments that
