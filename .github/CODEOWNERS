@@ -8,3 +8,5 @@
 /Dockerfile                   @Santidelacarrera
 /.grype.yaml                  @Santidelacarrera
 /SECURITY.md                  @Santidelacarrera
+/authorizations/              @Santidelacarrera
+/src/art_sim/bas/authorization.py @Santidelacarrera

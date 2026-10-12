@@ -1,0 +1,12 @@
+{
+  "organization": "Nexus Security & AI Lab",
+  "authorized_by": "<name of the person who authorises>",
+  "system_owner": "<name of the owner of the system under test>",
+  "statement": "<I authorise breach-and-attack simulation against the synthetic local lab only, between the dates below.>",
+  "targets": ["local-lab"],
+  "backends": ["sqlite", "postgresql-loopback"],
+  "valid_from": "2026-01-01T00:00:00+00:00",
+  "valid_until": "2026-03-31T00:00:00+00:00",
+  "catalogue_sha256": "<output of: python -m art_sim.bas --print-catalogue-digest>",
+  "acknowledges_lab_only": false
+}

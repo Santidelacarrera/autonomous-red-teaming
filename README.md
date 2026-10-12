@@ -44,10 +44,27 @@ The demo runs the real stack against a **fictional** 11-asset estate, shows the 
 **before and after** an approved control, explains the risk score factor by factor, tries to
 bypass the human gate in six ways (all must fail), records the approval and a hash-chained
 audit trail, and ends with a digest an outside reviewer can compare to the one committed here.
-See [docs/bas.md](docs/bas.md) for the breach-and-attack simulation (`make bas`), [docs/demo.md](docs/demo.md), [docs/reproducibility.md](docs/reproducibility.md),
+See [docs/demo.md](docs/demo.md), [docs/reproducibility.md](docs/reproducibility.md),
 [docs/security-controls.md](docs/security-controls.md) and
 [docs/integrations.md](docs/integrations.md) (what is verified against real services, and what is
 explicitly still pending).
+
+### Breach-and-attack simulation (lab only, written authorization required)
+
+*Nexus Security & AI Lab.* 34 reproducible attacks in 10 scenarios (tenant isolation, injection,
+prompt injection, data layer) against a **synthetic local lab**, each attempt recorded in a
+tamper-evident forensic log. **No authorization file, no run.**
+
+```bash
+pip install -r requirements.lock && pip install -e . --no-deps       # install
+python -m art_sim.bas --list-scenarios                                # catalogue: objective + success criterion
+python -m pytest tests/security -q                                    # tests (include the gate and reproducibility)
+cp authorizations/local-lab.template.json authorizations/local-lab.json   # owner completes + signs off
+make bas                                                              # run -> out/bas/report.md
+```
+
+Without the file the command exits `3` and creates nothing. See [docs/bas.md](docs/bas.md) and
+[docs/bas-scenarios.md](docs/bas-scenarios.md).
 
 ### ⚡ TL;DR — run the full pipeline in ~60 seconds
 

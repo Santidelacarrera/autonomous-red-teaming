@@ -4,18 +4,80 @@ A controlled harness that attacks the platform's own trust boundaries and record
 tamper-evident forensic evidence. It answers one question per boundary: *does the control hold,
 and did the platform notice?*
 
+> **Nexus Security & AI Lab.** Lab use only. Nothing here runs without the system owner's
+> written authorization (see *The authorization gate*), and the only target is the synthetic
+> local lab.
+
 ```bash
-make bas                       # SQLite lab           -> out/bas/{report.md,report.json,aegistrace.jsonl}
-python -m art_sim.bas --out out/bas --postgres-dsn postgresql://user@127.0.0.1:5432/scratchdb
-make bas STRICT=1              # also fail on defence-in-depth gaps
+# 0. one-time: the owner authorises in writing (see authorizations/README.md)
+python -m art_sim.bas --print-catalogue-digest      # read-only: the digest to review and authorise
+cp authorizations/local-lab.template.json authorizations/local-lab.json   # then complete it
+
+# 1. run (refuses with exit code 3 if the authorization is missing, expired or out of scope)
+make bas                                            # SQLite lab -> out/bas/{report.md,report.json,aegistrace.jsonl}
+python -m art_sim.bas --out out/bas --authorization path/to/auth.json \
+       --postgres-dsn postgresql://user@127.0.0.1:5432/scratchdb      # loopback scratch database only
+make bas STRICT=1                                   # also fail on defence-in-depth gaps
+
+# 2. read-only, no authorization needed
+python -m art_sim.bas --list-scenarios              # == docs/bas-scenarios.md
+
+# 3. verify the forensic log
 python scripts/verify_audit_log.py out/bas/aegistrace.jsonl
 ```
 
-Exit code: `0` no breach · `1` a control failed (or, with `--strict`, a gap remains) · `2` unsafe target refused.
+Exit code: `0` no breach · `1` a control failed (or, with `--strict`, a gap remains) ·
+`2` unsafe target refused · `3` **not authorised**.
+
+## The authorization gate (no file, no run)
+
+`run_campaign` cannot be called without a `GrantedAuthorization`, and the only way to get one is
+`verify_authorization`, which fails closed. The CLI checks it **before** the output directory,
+the store or the forensic log exist. The file must state, and the code verifies:
+
+| Requirement | Why |
+|---|---|
+| a named `authorized_by` and `system_owner` (placeholders such as `<name>`, `TODO`, `PENDING` are rejected) | consent comes from a person, not a template |
+| `targets` is exactly `["local-lab"]` — any hostname, URL, address or wildcard invalidates the whole file | real systems are never in scope |
+| `backends` within `sqlite` / `postgresql-loopback`, and the backend in use is covered | no remote database, ever |
+| `valid_from` / `valid_until` with time zone, at most 90 days apart, and *now* inside the window | authorizations are renewed, not forgotten |
+| `catalogue_sha256` equals the digest of the current attack catalogue | adding or changing an attack requires a new, reviewed authorization |
+| `acknowledges_lab_only: true` | explicit acknowledgement |
+
+Each campaign writes the authorization (who, until when, file digest, catalogue digest) as the
+**first record** of its AegisTrace log. Rejection messages never echo file contents.
+
+**Limits, stated plainly.** This is an *attestation* gate, not cryptographic identity: anyone with
+write access to the repository could author the file. The controls around it are procedural —
+`authorizations/` and `authorization.py` are owned in `CODEOWNERS`, changes go through review,
+and the authorization digest is in every forensic log. For stronger guarantees, sign the file
+(signed commit or detached signature) and anchor the log head outside the writer.
+`tests/security/test_bas_authorization.py` covers every rejection path; the 12 controls in the
+gate were mutation-tested (disabling any one of them makes the tests fail).
+
+## Scenarios, objectives and success criteria
+
+The 34 attack cases are grouped into 10 scenarios. Each states the attacker's **objective**, the
+**success criterion** (when the defence is considered effective) and what a failure means — see
+[bas-scenarios.md](bas-scenarios.md), generated from the code and kept identical by a test. The
+report adds one status per scenario: `held`, `finding` (nothing breached, a gap remains) or `fail`.
+
+## Reproducibility
+
+The campaign fingerprint digests *what was attacked and what happened* (case, verdict, HTTP
+status, detail, whether the platform logged it) and excludes run ids, request ids and times. The
+SQLite value is committed in `src/art_sim/bas/expected_fingerprint.sha256`; a test compares it
+with fresh runs (in process and in independent interpreters from another working directory), and
+checks that the fingerprint changes when a control is removed. To reproduce from a clean clone:
+
+```bash
+bash scripts/reproduce.sh     # includes the BAS step when authorizations/local-lab.json exists
+python -m pytest tests/security/test_bas_reproducibility.py -q
+```
 
 ## What it is not
 
-* **Not a scanner for real systems.** The only target is an in-process lab: HTTP goes through
+* **Not a scanner for real systems.** The only target is an in-process lab (and the authorization gate refuses any other scope): HTTP goes through
   `httpx.ASGITransport` (no socket, no DNS), data is two fictional tenants, and the optional
   PostgreSQL must be on **loopback** — anything else is refused (`UnsafeTargetError`).
   Point `--postgres-dsn` at a *scratch database*: the campaign adds rows to it.
@@ -121,3 +183,6 @@ makes it fail.
 * In-process transport means TLS, WAF, ingress and network policy are not exercised.
 * Findings are as good as the catalogue: a clean campaign shows these 34 attacks fail, not that
   none exist.
+
+---
+_Nexus Security & AI Lab. Reusable component: it depends on the platform's public API only and carries no customer data._

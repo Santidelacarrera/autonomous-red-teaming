@@ -14,6 +14,15 @@ All notable changes to this project are documented here. The format is based on
   recorded by **AegisTrace**, a hash-chained forensic log verifiable with
   `scripts/verify_audit_log.py`. Runs in CI against SQLite and a real PostgreSQL. See
   [docs/bas.md](docs/bas.md).
+- **Written-authorization gate for the BAS**: `python -m art_sim.bas` refuses to run (exit 3,
+  nothing created) without a valid `authorizations/local-lab.json` — named owner, scope exactly
+  `local-lab`, loopback-only backends, validity window of at most 90 days, bound to the digest of
+  the reviewed attack catalogue. The authorization is the first record of every forensic log.
+- **Scenario catalogue** (10 scenarios, each with objective, success criterion and failure
+  consequence; [docs/bas-scenarios.md](docs/bas-scenarios.md) is generated from the code) and a
+  per-scenario status in the report.
+- **Reproducibility fingerprint** of a campaign, pinned in `expected_fingerprint.sha256` and
+  verified across independent processes.
 
 ### Security
 - `PromptInjectionSanitizer.sanitize_text` was bypassed by zero-width characters, soft hyphens and

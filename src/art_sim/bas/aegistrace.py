@@ -25,6 +25,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from art_sim.bas.authorization import GrantedAuthorization
 from art_sim.bas.models import AttackCase, Category, Observation, Verdict
 from art_sim.security.audit_chain import GENESIS_HASH, build_envelope
 from art_sim.security.redaction import redact_security_text
@@ -35,8 +36,27 @@ PREVIEW_CHARS = 80
 class IncidentPhase(StrEnum):
     """Lifecycle marker of an incident record."""
 
+    AUTHORIZED = "campaign.authorized"
     STARTED = "attempt.started"
     FINISHED = "attempt.finished"
+
+
+class AuthorizationEvidence(BaseModel):
+    """First record of every campaign: who authorised it, until when, and which file proves it."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    event_id: UUID = Field(default_factory=uuid4)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    campaign_id: UUID
+    phase: IncidentPhase = IncidentPhase.AUTHORIZED
+    authorized_by: str
+    system_owner: str
+    organization: str
+    valid_until: datetime
+    backend: str
+    authorization_sha256: str
+    catalogue_sha256: str
 
 
 class Incident(BaseModel):
@@ -91,7 +111,22 @@ class AegisTrace:
                 seq, head = int(document["seq"]) + 1, str(document["hash"])
         return seq, head
 
-    def _append(self, incident: Incident) -> None:
+    def authorized(self, grant: GrantedAuthorization, backend: str) -> None:
+        """Record the authorization that allowed this campaign, before anything runs."""
+        self._append(
+            AuthorizationEvidence(
+                campaign_id=self.campaign_id,
+                authorized_by=grant.authorized_by,
+                system_owner=grant.system_owner,
+                organization=grant.organization,
+                valid_until=grant.valid_until,
+                backend=backend,
+                authorization_sha256=grant.file_sha256,
+                catalogue_sha256=grant.catalogue_sha256,
+            )
+        )
+
+    def _append(self, incident: Incident | AuthorizationEvidence) -> None:
         envelope = build_envelope(self._seq, self._head, incident.model_dump(mode="json"))
         line = json.dumps(envelope, separators=(",", ":"), sort_keys=True)
         with self._path.open("a", encoding="utf-8") as handle:
