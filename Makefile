@@ -97,6 +97,9 @@ verify-provenance: ## Independently verify a container image's build provenance 
 demo: ## One-command synthetic lab demo -> out/demo/report.html (offline, simulation only)
 	$(PY) -m art_sim.demo --out out/demo
 
+bas: ## Breach-and-attack simulation vs the synthetic lab -> out/bas (fails on any breach); STRICT=1 also fails on gaps
+	$(PY) -m art_sim.bas --out out/bas $(if $(STRICT),--strict,)
+
 reproduce: ## Reproduce and verify everything from a clean install -> evidence/SUMMARY.md
 	bash scripts/reproduce.sh
 

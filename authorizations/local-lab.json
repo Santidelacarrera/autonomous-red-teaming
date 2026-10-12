@@ -1,0 +1,12 @@
+{
+  "organization": "Nexus Security & AI Lab",
+  "authorized_by": "Santiago de la Carrera López",
+  "system_owner": "Santiago de la Carrera López",
+  "statement": "Autorizo por escrito la simulación de intrusión (BAS) exclusivamente contra el laboratorio sintético local de Nexus Security & AI Lab, sin sistemas reales, datos reales ni redes externas. Autorización otorgada por el propietario en la sesión de Claude Code del 2026-10-12, tras revisar docs/bas-scenarios.md.",
+  "targets": ["local-lab"],
+  "backends": ["sqlite", "postgresql-loopback"],
+  "valid_from": "2026-10-12T00:00:00+00:00",
+  "valid_until": "2027-01-09T00:00:00+00:00",
+  "catalogue_sha256": "b8e9cd48326509d5d3436bd0ebe85d75bdadb90f5fc52e7ead49803cc544044b",
+  "acknowledges_lab_only": true
+}

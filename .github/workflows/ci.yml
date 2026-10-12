@@ -120,6 +120,42 @@ jobs:
         run: python -m art_sim.demo --out evidence/demo --quiet
       - name: Verify the demo's audit hash chain
         run: python scripts/verify_audit_log.py evidence/demo/audit/security.jsonl
+      - name: Breach-and-attack simulation (SQLite lab; needs the owner's written authorization)
+        run: |
+          if [ -f authorizations/local-lab.json ]; then
+            python -m art_sim.bas --out evidence/bas-sqlite
+          else
+            echo "::notice::BAS not run: no written authorization (authorizations/local-lab.json). That is the gate working as designed."
+            set +e; python -m art_sim.bas --out evidence/bas-refused; code=$?; set -e
+            test "$code" -eq 3 && test ! -e evidence/bas-refused
+          fi
+      - name: Breach-and-attack simulation (real PostgreSQL, separate database)
+        run: |
+          if [ -f authorizations/local-lab.json ]; then
+            PGPASSWORD=devpw createdb -h 127.0.0.1 -U postgres bas
+            python -m art_sim.bas --out evidence/bas-postgres \
+              --postgres-dsn postgresql://postgres:devpw@127.0.0.1:5432/bas
+          else
+            echo "::notice::BAS (PostgreSQL) not run: no written authorization."
+          fi
+      - name: Verify the AegisTrace forensic chains
+        run: |
+          for log in evidence/bas-sqlite/aegistrace.jsonl evidence/bas-postgres/aegistrace.jsonl; do
+            if [ -f "$log" ]; then python scripts/verify_audit_log.py "$log"; fi
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: bas-campaign
+          path: |
+            evidence/bas-sqlite/report.md
+            evidence/bas-sqlite/report.json
+            evidence/bas-sqlite/aegistrace.jsonl
+            evidence/bas-postgres/report.md
+            evidence/bas-postgres/report.json
+            evidence/bas-postgres/aegistrace.jsonl
+          if-no-files-found: ignore
+          retention-days: 30
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

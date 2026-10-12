@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from art_sim.bas.corpus import OBFUSCATED_INSTRUCTIONS, SHY, ZWJ, ZWSP
 from art_sim.security.sanitizer import PromptInjectionSanitizer
 
 SANITIZER = PromptInjectionSanitizer()
@@ -52,3 +53,16 @@ def test_newlines_and_tabs_are_neutralized() -> None:
 def test_empty_and_whitespace_only_input() -> None:
     assert SANITIZER.sanitize_text("") == ""
     assert SANITIZER.sanitize_text("   \n\t  ") == ""
+
+
+@pytest.mark.parametrize("payload", OBFUSCATED_INSTRUCTIONS)
+def test_obfuscated_instruction_markers_are_redacted(payload: str) -> None:
+    cleaned = SANITIZER.sanitize_text(payload)
+    assert "[redacted]" in cleaned
+    assert not any(ch in cleaned for ch in (ZWSP, ZWJ, SHY))
+
+
+@pytest.mark.parametrize("payload", OBFUSCATED_INSTRUCTIONS)
+def test_sanitizing_obfuscated_text_is_idempotent(payload: str) -> None:
+    once = SANITIZER.sanitize_text(payload)
+    assert SANITIZER.sanitize_text(once) == once

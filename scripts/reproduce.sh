@@ -253,6 +253,18 @@ if [ -f "${EVIDENCE}/demo/audit/security.jsonl" ]; then
   fi
 fi
 
+# --- 7b. breach-and-attack simulation (only with the owner's written authorization) ---------
+if [ -f authorizations/local-lab.json ]; then
+  if "${PY}" -m art_sim.bas --out "${EVIDENCE}/bas" > "${EVIDENCE}/bas.txt" 2>&1 \
+     && "${PY}" scripts/verify_audit_log.py "${EVIDENCE}/bas/aegistrace.jsonl" >> "${EVIDENCE}/bas.txt" 2>&1; then
+    record "breach-and-attack simulation" PASS "$(grep -E 'Verdicts' "${EVIDENCE}/bas.txt" | sed 's/^- //')"
+  else
+    record "breach-and-attack simulation" FAIL "see ${EVIDENCE}/bas.txt"
+  fi
+else
+  record "breach-and-attack simulation" SKIP "no written authorization (authorizations/local-lab.json); the gate refuses to run"
+fi
+
 # --- 8. container image ----------------------------------------------------------------------
 if [ "${WITH_DOCKER}" = 1 ]; then
   if ! docker_ok; then
